@@ -136,6 +136,7 @@ def capture(host: str, port: int, duration: Optional[int], description: Optional
         log_file = session_manager.get_session_log_path(session)
         
         click.echo(f"\n✓ Session created: {session['session_id']}")
+        click.echo(f"✓ Telnet connection established")
         click.echo(f"  Saving logs to: {log_file}")
         if show:
             click.echo("  Displaying logs in terminal: Yes")
@@ -351,20 +352,28 @@ def live_main(host: str, duration: Optional[int], description: Optional[str], po
         session = session_manager.create_session(host, port, description)
         log_file = session_manager.get_session_log_path(session)
         
-        click.echo(f"✓ Session: {session['session_id']}\n")
+        click.echo(f"✓ Session: {session['session_id']}")
+        click.echo(f"✓ Telnet connection established")
+        click.echo(f"✓ Starting log capture...\n")
         
-        # Launch PSDK event monitor in separate terminal
+        # Launch PSDK event monitor in separate terminal AFTER connection is successful
         monitor_process = None
-        if monitor:
-            click.echo("🚀 Launching PSDK Event Monitor in new terminal...\n")
-            monitor_process = launch_psdk_monitor(str(log_file))
-            if monitor_process:
-                click.echo("✓ PSDK Monitor launched successfully\n")
-            else:
-                click.echo("⚠️  Could not launch monitor (continuing without it)\n")
+        monitor_launched = False
         
         # Display callback with color coding
         def display_callback(line: str):
+            nonlocal monitor_launched, monitor_process
+            
+            # Launch monitor on first log line received (confirms connection is working)
+            if not monitor_launched and monitor:
+                click.echo("\n🚀 Launching PSDK Event Monitor...\n")
+                monitor_process = launch_psdk_monitor(str(log_file))
+                if monitor_process:
+                    click.echo("✓ PSDK Monitor launched successfully\n")
+                else:
+                    click.echo("⚠️  Could not launch monitor (continuing without it)\n")
+                monitor_launched = True
+            
             # Highlight PSDK logs in yellow, everything else in white
             if 'PSDK::' in line:
                 click.echo(click.style(line, fg='yellow'))
