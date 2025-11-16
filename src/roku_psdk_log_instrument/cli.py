@@ -102,6 +102,8 @@ def capture(host: str, port: int, duration: Optional[int], description: Optional
     """
     session_manager = SessionManager()
     client = RokuTelnetClient(host, port)
+    session = None
+    interrupted = False
     
     try:
         # Test connection first
@@ -155,9 +157,26 @@ def capture(host: str, port: int, duration: Optional[int], description: Optional
         session_manager.end_session(session)
         
     except KeyboardInterrupt:
-        click.echo("\n\nStopping capture...")
+        interrupted = True
+        click.echo("\n\n" + "─" * 55)
+        click.echo("Capture stopped by user")
+        click.echo("─" * 55 + "\n")
+        
+        # End session first
+        if session:
+            session_manager.end_session(session)
+    
     finally:
         client.disconnect()
+        
+        # Prompt for deletion if interrupted and session exists
+        if interrupted and session:
+            if click.confirm("\n💾 Would you like to keep the captured logs?", default=True):
+                click.echo(f"✓ Logs saved in: {session.get('directory', '.temp/' + session['session_id'])}")
+            else:
+                click.echo("\n🗑️  Deleting session logs...")
+                session_manager.delete_session(session)
+                click.echo("✓ Logs deleted")
 
 
 @telnet.command()
@@ -291,6 +310,8 @@ def live_main(host: str, duration: Optional[int], description: Optional[str], po
     """
     session_manager = SessionManager()
     client = RokuTelnetClient(host, port)
+    session = None
+    interrupted = False
     
     # Display banner
     click.echo("\n" + "═" * 55)
@@ -357,11 +378,26 @@ def live_main(host: str, duration: Optional[int], description: Optional[str], po
         session_manager.end_session(session)
         
     except KeyboardInterrupt:
+        interrupted = True
         click.echo("\n\n" + "─" * 55)
         click.echo("Capture stopped by user")
         click.echo("─" * 55 + "\n")
+        
+        # End session first
+        if session:
+            session_manager.end_session(session)
+    
     finally:
         client.disconnect()
+        
+        # Prompt for deletion if interrupted and session exists
+        if interrupted and session:
+            if click.confirm("\n💾 Would you like to keep the captured logs?", default=True):
+                click.echo(f"✓ Logs saved in: {session.get('directory', '.temp/' + session['session_id'])}")
+            else:
+                click.echo("\n🗑️  Deleting session logs...")
+                session_manager.delete_session(session)
+                click.echo("✓ Logs deleted")
 
 
 if __name__ == "__main__":

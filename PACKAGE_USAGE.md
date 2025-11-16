@@ -5,28 +5,62 @@
 ## Prerequisites
 
 - Python 3.8 or higher
-- pip
+- `pipx` (recommended) or `pip`
 - macOS (for dual-terminal monitoring feature)
 
 ## Installation
 
-### Option 1: Install from PyPI (Recommended)
+### Option 1: Install with pipx (Recommended for CLI Tools)
+
+**Best for:** Installing command-line tools that you want to use system-wide.
 
 ```bash
-pip install wbd-roku-psdk-log-instrument
+# Install pipx if you don't have it
+brew install pipx
+pipx ensurepath
+
+# Close and reopen terminal, then install the package
+pipx install git+https://github.com/vinoth-discovery/wbd-roku-psdk-log-Instrumentation.git
 ```
 
-### Option 2: Install from Git Repository
+**Benefits:**
+- ✅ Commands available system-wide
+- ✅ Automatic isolated environment
+- ✅ No PATH configuration needed
+- ✅ Easy to update: `pipx upgrade wbd-roku-psdk-log-instrument`
+
+### Option 2: Install from PyPI with pipx
 
 ```bash
-pip install git+https://github.com/your-org/wbd-roku-psdk-log-instrument.git
+pipx install wbd-roku-psdk-log-instrument
 ```
 
 ### Option 3: Install from Wheel File
 
 ```bash
-pip install wbd_roku_psdk_log_instrument-0.1.0-py3-none-any.whl
+pipx install wbd_roku_psdk_log_instrument-0.1.0-py3-none-any.whl
 ```
+
+### Option 4: Install with pip in Virtual Environment
+
+If you prefer traditional pip installation:
+
+```bash
+# Create a virtual environment
+python3 -m venv ~/.venvs/roku-psdk
+source ~/.venvs/roku-psdk/bin/activate
+
+# Install from git
+pip install git+https://github.com/vinoth-discovery/wbd-roku-psdk-log-Instrumentation.git
+
+# Create alias for easy access (add to ~/.zshrc)
+echo 'alias psdk-instrument="~/.venvs/roku-psdk/bin/psdk-instrument"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+### ⚠️ Note on Python 3.11+
+
+If you see "externally-managed-environment" error, use **pipx** (recommended) or install in a virtual environment. See [Troubleshooting](#troubleshooting) section below.
 
 ## Quick Start
 
@@ -79,6 +113,16 @@ psdk-instrument 192.168.50.81
 ### 4. Stop Capturing
 
 Press **Ctrl+C** in the main terminal to stop.
+
+**After stopping, you'll be prompted:**
+```
+💾 Would you like to keep the captured logs? [Y/n]:
+```
+
+- Press **Y** (default) to keep the logs in `.temp/`
+- Press **N** to delete the logs immediately
+
+This helps keep your `.temp/` directory clean by removing unwanted test captures.
 
 ## Understanding the Monitor Terminal
 
@@ -211,13 +255,82 @@ Place this file in a `config/` directory where you run the command.
 ### Command Not Found
 
 ```bash
--bash: psdk-instrument: command not found
+zsh: command not found: psdk-instrument
 ```
 
 **Solution:**
-1. Verify installation: `pip list | grep roku-psdk`
-2. Check Python scripts directory is in PATH
-3. Try using full command: `python -m roku_psdk_log_instrument.cli live <ROKU_IP>`
+
+**1. If installed with pipx:**
+```bash
+# Verify installation
+pipx list
+
+# Reinstall if needed
+pipx reinstall wbd-roku-psdk-log-instrument
+
+# Ensure pipx path is configured
+pipx ensurepath
+source ~/.zshrc
+```
+
+**2. If installed with pip, verify installation:**
+```bash
+pip3 show wbd-roku-psdk-log-instrument
+# or
+pip3 list | grep roku-psdk
+```
+
+**3. Add Python scripts to PATH (if using pip):**
+
+On macOS/Linux, add to `~/.zshrc` or `~/.bashrc`:
+```bash
+# For Python 3.13 (adjust version as needed)
+export PATH="$HOME/Library/Python/3.13/bin:$PATH"
+
+# Reload shell config
+source ~/.zshrc
+```
+
+Find your Python version:
+```bash
+python3 --version
+```
+
+**4. Alternative: Use Python module directly:**
+```bash
+python3 -m roku_psdk_log_instrument.cli live <ROKU_IP>
+```
+
+### Externally Managed Environment Error
+
+```bash
+error: externally-managed-environment
+```
+
+**This is Python 3.11+ protection (PEP 668).**
+
+**Solution 1: Use pipx (Recommended)**
+```bash
+brew install pipx
+pipx ensurepath
+pipx install git+https://github.com/vinoth-discovery/wbd-roku-psdk-log-Instrumentation.git
+```
+
+**Solution 2: Use virtual environment**
+```bash
+python3 -m venv ~/.venvs/roku-psdk
+source ~/.venvs/roku-psdk/bin/activate
+pip install git+https://github.com/vinoth-discovery/wbd-roku-psdk-log-Instrumentation.git
+
+# Add alias to ~/.zshrc
+echo 'alias psdk-instrument="~/.venvs/roku-psdk/bin/psdk-instrument"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+**Solution 3: Override (Not Recommended)**
+```bash
+pip3 install --user --break-system-packages git+https://github.com/vinoth-discovery/wbd-roku-psdk-log-Instrumentation.git
+```
 
 ## Available Commands
 
@@ -250,8 +363,10 @@ roku-log-instrument telnet cleanup
 ## Example Workflow
 
 ```bash
-# 1. Install the package
-pip install wbd-roku-psdk-log-instrument
+# 1. Install the package with pipx
+brew install pipx
+pipx ensurepath
+pipx install git+https://github.com/vinoth-discovery/wbd-roku-psdk-log-Instrumentation.git
 
 # 2. Test connection to your Roku
 roku-log-instrument telnet test 192.168.50.81
@@ -262,12 +377,18 @@ psdk-instrument 192.168.50.81
 # 4. Reproduce the issue on your Roku device
 
 # 5. Stop with Ctrl+C
+# You'll be prompted: "Would you like to keep the captured logs?"
+# - Press Y to keep the logs
+# - Press N to delete them
 
-# 6. Find your logs in .temp/<timestamp>/
+# 6. If you kept the logs, find them in .temp/<timestamp>/
 ls -la .temp/
 
 # 7. Share or analyze the logs
 cat .temp/20251116_160944/roku_logs_20251116_160944.log | grep "error"
+
+# 8. Update the tool when needed
+pipx upgrade wbd-roku-psdk-log-instrument
 ```
 
 ## Support

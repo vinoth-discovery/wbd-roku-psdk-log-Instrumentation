@@ -237,4 +237,42 @@ class SessionManager:
             Current session dictionary or None
         """
         return self._current_session
+    
+    def delete_session(self, session: Optional[Dict] = None) -> bool:
+        """
+        Delete a session and its log files.
+        
+        Args:
+            session: Session dictionary (uses current session if None)
+            
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        import shutil
+        
+        session = session or self._current_session
+        
+        if not session:
+            print("No session to delete")
+            return False
+        
+        try:
+            session_dir = session.get("directory") or (
+                self.temp_dir / session["session_id"]
+            )
+            
+            if session_dir.exists():
+                shutil.rmtree(session_dir)
+                print(f"✓ Deleted session: {session['session_id']}")
+                
+                if session == self._current_session:
+                    self._current_session = None
+                
+                return True
+            else:
+                print(f"Session directory not found: {session_dir}")
+                return False
+        except Exception as e:
+            print(f"Error deleting session: {e}")
+            return False
 
