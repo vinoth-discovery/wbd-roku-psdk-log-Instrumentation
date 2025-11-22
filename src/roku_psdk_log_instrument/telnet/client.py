@@ -263,6 +263,31 @@ class RokuTelnetClient:
         if self._capture_thread:
             self._capture_thread.join(timeout=2)
     
+    def send_command(self, command: str) -> bool:
+        """
+        Send a command to the Roku device via telnet.
+        
+        Args:
+            command: Command string to send
+            
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        if not self.is_connected() or self.socket is None:
+            return False
+        
+        try:
+            # Ensure command ends with newline
+            if not command.endswith('\n'):
+                command += '\n'
+            
+            # Send command
+            self.socket.send(command.encode('utf-8'))
+            return True
+        except (socket.error, OSError) as e:
+            print(f"Error sending command: {e}")
+            return False
+    
     @staticmethod
     def test_connection(host: str, port: int = DEFAULT_PORT, timeout: int = TIMEOUT) -> bool:
         """

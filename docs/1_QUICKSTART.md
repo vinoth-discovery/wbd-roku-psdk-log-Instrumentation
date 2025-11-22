@@ -59,7 +59,7 @@ psdk-instrument 192.168.50.81
 ```
 
 **This automatically opens TWO terminals:**
-1. **Main Terminal**: Shows ALL logs (PSDK highlighted in yellow)
+1. **Main Terminal**: Shows ALL logs (PSDK highlighted in yellow) + accepts interactive commands
 2. **Monitor Terminal**: Shows ONLY PSDK:: events
 
 **Alternative: Use shell script (auto-activates venv)**
@@ -74,9 +74,16 @@ Press **Ctrl+C** to stop capturing.
 - **Main terminal**:
   - 🟡 PSDK logs highlighted in yellow (lines with `PSDK::`)
   - ⚪ All other logs in white/default color
+  - ⌨️  **Interactive commands**: Type and press Enter to send commands to Roku
+  - 🟢 Your sent commands appear in green
 - **Monitor terminal**:
   - ⚪ ONLY PSDK:: events in white (filtered view)
 - 💾 Logs saved to `.temp/<session_id>/`
+
+**💡 TIP - Interactive Commands:**
+While logs are streaming, you can type commands directly and press Enter. This is useful when:
+- 🔥 A crash happens and you need to send debug commands
+- 🐛 You want to test device behavior without stopping the capture
 
 ### 5. View Your Logs
 

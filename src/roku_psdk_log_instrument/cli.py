@@ -5,6 +5,9 @@ Command-line interface for the Roku PSDK Log Instrumentation tool.
 import click
 import subprocess
 import os
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 from roku_psdk_log_instrument.telnet.client import RokuTelnetClient
@@ -315,16 +318,17 @@ def live_main(host: str, duration: Optional[int], description: Optional[str], po
     interrupted = False
     
     # Display banner
-    click.echo("\n" + "═" * 55)
-    click.echo("  PSDK Instrument - Roku Live Log Viewer")
-    click.echo("═" * 55)
+    click.echo("\n" + "═" * 65)
+    click.echo("  PSDK Instrument - Roku Live Log Viewer & Interactive Shell")
+    click.echo("═" * 65)
     click.echo(f"\n📡 Connecting to: {host}:{port}")
     click.echo(f"💾 Logs saved to: .temp/")
     click.echo(f"👁️  Live display: ENABLED")
     if monitor:
         click.echo(f"📊 PSDK Monitor: ENABLED (separate terminal)")
+    click.echo(f"⌨️  Interactive commands: ENABLED (type and press Enter)")
     click.echo("\nPress Ctrl+C to stop\n")
-    click.echo("─" * 55 + "\n")
+    click.echo("─" * 65 + "\n")
     
     try:
         # Test connection first
@@ -355,10 +359,18 @@ def live_main(host: str, duration: Optional[int], description: Optional[str], po
         click.echo(f"✓ Session: {session['session_id']}")
         click.echo(f"✓ Telnet connection established")
         click.echo(f"✓ Starting log capture...\n")
+        click.echo(click.style("💡 TIP: Type commands and press Enter to send them to Roku (useful during crashes)", fg="cyan"))
+        click.echo(click.style("      Your commands will appear in green. Responses will be shown in real-time.", fg="cyan"))
+        click.echo()
         
         # Launch PSDK event monitor in separate terminal AFTER connection is successful
         monitor_process = None
         monitor_launched = False
+        capture_active = threading.Event()
+        capture_active.set()
+        
+        # Thread-safe lock for output
+        output_lock = threading.Lock()
         
         # Display callback with color coding
         def display_callback(line: str):
@@ -366,22 +378,62 @@ def live_main(host: str, duration: Optional[int], description: Optional[str], po
             
             # Launch monitor on first log line received (confirms connection is working)
             if not monitor_launched and monitor:
-                click.echo("\n🚀 Launching PSDK Event Monitor...\n")
-                monitor_process = launch_psdk_monitor(str(log_file))
-                if monitor_process:
-                    click.echo("✓ PSDK Monitor launched successfully\n")
-                else:
-                    click.echo("⚠️  Could not launch monitor (continuing without it)\n")
-                monitor_launched = True
+                with output_lock:
+                    click.echo("\n🚀 Launching PSDK Event Monitor...\n")
+                    monitor_process = launch_psdk_monitor(str(log_file))
+                    if monitor_process:
+                        click.echo("✓ PSDK Monitor launched successfully\n")
+                    else:
+                        click.echo("⚠️  Could not launch monitor (continuing without it)\n")
+                    monitor_launched = True
             
             # Highlight PSDK logs in yellow, everything else in white
-            if 'PSDK::' in line:
-                click.echo(click.style(line, fg='yellow'))
-            else:
-                click.echo(line)
+            with output_lock:
+                if 'PSDK::' in line:
+                    click.echo(click.style(line, fg='yellow'))
+                else:
+                    click.echo(line)
         
-        # Capture logs with live display
-        client.capture_logs(log_file, callback=display_callback, max_duration=duration)
+        # Start log capture in background thread
+        capture_thread = threading.Thread(
+            target=lambda: client.capture_logs(log_file, callback=display_callback, max_duration=duration),
+            daemon=True
+        )
+        capture_thread.start()
+        
+        # Wait for first log to ensure connection is working
+        time.sleep(1)
+        
+        # Input thread to handle user commands
+        def handle_user_input():
+            while capture_active.is_set() and client.is_connected():
+                try:
+                    # Read user input (non-blocking with timeout would be better, but this works)
+                    user_input = input()
+                    
+                    if user_input.strip():
+                        # Send command to Roku
+                        if client.send_command(user_input):
+                            with output_lock:
+                                click.echo(click.style(f"→ Sent: {user_input}", fg="green", bold=True))
+                        else:
+                            with output_lock:
+                                click.echo(click.style(f"✗ Failed to send command", fg="red"))
+                except EOFError:
+                    # Handle Ctrl+D
+                    break
+                except Exception:
+                    break
+        
+        # Start input thread
+        input_thread = threading.Thread(target=handle_user_input, daemon=True)
+        input_thread.start()
+        
+        # Wait for capture thread to complete
+        capture_thread.join()
+        
+        # Stop input thread
+        capture_active.clear()
         
         # End session
         session_manager.end_session(session)

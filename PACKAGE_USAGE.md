@@ -102,13 +102,38 @@ psdk-instrument 192.168.50.81
 
 **This command automatically:**
 - ✅ Opens **TWO terminals**:
-  - **Main Terminal**: Shows ALL logs (PSDK events highlighted in yellow)
+  - **Main Terminal**: Shows ALL logs (PSDK events highlighted in yellow) + accepts interactive commands
   - **Monitor Terminal**: Shows ONLY PSDK events with player/playback session tracking
+- ✅ **Interactive commands**: Type and press Enter to send commands to Roku during capture
 - ✅ Saves logs to `.temp/<session_timestamp>/` in your current directory
 - ✅ Tracks player and playback sessions with visual headers/footers
 - ✅ Displays content metadata (ID, title, type, position)
 - ✅ Shows timestamps with milliseconds for each event
 - ✅ Highlights repeated events in grey
+
+### 🔥 Interactive Commands During Capture
+
+**While capturing logs, you can send commands to the Roku device at any time:**
+
+1. Simply type your command in the main terminal
+2. Press Enter to send it to the device
+3. Your command appears in **green**: `→ Sent: your_command`
+4. Device responses appear in the log stream in real-time
+
+**When is this useful?**
+- 🔥 **During crashes**: Send debug commands without stopping the capture
+- 🐛 **Real-time debugging**: Test device behavior while monitoring logs
+- 📊 **Interactive testing**: Trigger specific actions and see immediate results
+
+**Example:**
+```
+... (logs streaming) ...
+[INFO] Some log line
+your_debug_command          ← You type this and press Enter
+→ Sent: your_debug_command  ← Confirmation in green
+[INFO] Device response...   ← Response appears in log stream
+... (logs continue) ...
+```
 
 ### 4. Stop Capturing
 

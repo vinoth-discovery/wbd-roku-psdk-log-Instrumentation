@@ -6,6 +6,7 @@ A Python-based tool for instrumenting and validating Roku Player Software Develo
 
 This tool provides capabilities to:
 - **Capture logs** from Roku devices via telnet (port 8085)
+- **Interactive commands** - Send commands to Roku while capturing logs (perfect for crash debugging!)
 - **PSDK Event Monitoring** with automatic dual-terminal display
 - **Session management** with automatic organization in `.temp` directory
 - **Connection monitoring** with automatic reconnection prompts
@@ -150,9 +151,30 @@ psdk-instrument 192.168.50.81 --no-monitor
 **What it does:**
 - ✅ Connects to Roku telnet (port 8085)
 - ✅ **Main terminal**: Shows ALL logs (PSDK logs highlighted in yellow)
+- ✅ **Interactive commands**: Type commands and press Enter to send them to Roku (useful during crashes!)
 - ✅ **Monitor terminal**: Shows ONLY PSDK:: events in white (automatically opens)
 - ✅ Saves logs to `.temp/<session_id>/` folder
 - ✅ Press Ctrl+C to stop capture
+
+**Interactive Command Feature:**
+While logs are streaming, you can type commands directly in the main terminal and press Enter to send them to the Roku device. This is especially useful when:
+- 🔥 A crash occurs and you need to send debug commands
+- 🐛 You need to test device behavior in real-time
+- 📊 You want to trigger specific actions without stopping the capture
+
+Your sent commands appear in **green**, and responses are shown in real-time along with the log stream.
+
+**Example:**
+```
+... (logs streaming) ...
+[INFO] Player initialized
+[DEBUG] Loading content...
+get_crash_log                    ← You type this and press Enter
+→ Sent: get_crash_log            ← Confirmation in green
+[INFO] Crash log: <details>     ← Response appears immediately
+[PSDK::] playbackProgressEvent   ← Logs continue streaming
+... (logs continue) ...
+```
 
 ### 🔄 Alternative: Shell Script (Auto-activates venv)
 
