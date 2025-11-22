@@ -11,8 +11,8 @@
   },
   "content_metadata": {
     "load_pattern": "Player Controller: Load",
-    "fields": ["id", "title", "contentType", "initialPlaybackPosition"],
-    "description": "Pattern to detect content load events and fields to extract from contentMetadata"
+    "fields": ["id", "title", "subtitle", "contentType", "playbackType", "initialPlaybackPosition"],
+    "description": "Pattern to detect content load events and fields to extract from contentMetadata. Note: 'subtitle' (episode name) is prioritized over 'originalSubtitle' (series name)"
   },
   "display": {
     "show_headers": true,

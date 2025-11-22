@@ -51,7 +51,9 @@ PLAYBACK_SESSION_NUMBER=0
 CONTENT_LOAD_ACTIVE=false
 CONTENT_ID=""
 CONTENT_TITLE=""
+CONTENT_SUBTITLE=""
 CONTENT_TYPE=""
+CONTENT_PLAYBACK_TYPE=""
 CONTENT_PLAYBACK_POS=""
 
 # Event repetition tracking
@@ -80,7 +82,13 @@ show_player_created() {
     echo -e "${MAGENTA}╔═══════════════════════════════════════════════════╗${NC}"
     echo -e "${MAGENTA}║  🎬 PLAYER SESSION STARTED  Time: ${time}  ║${NC}"
     echo -e "${MAGENTA}╠═══════════════════════════════════════════════════╣${NC}"
-    echo -e "${MAGENTA}║${NC} Session: ${session_id:0:40}... ${MAGENTA}║${NC}"
+    
+    if [ -n "$session_id" ]; then
+        echo -e "${MAGENTA}║${NC} Session: ${session_id:0:40}... ${MAGENTA}║${NC}"
+    else
+        echo -e "${MAGENTA}║${NC} (Connected mid-stream - auto-created session)   ${MAGENTA}║${NC}"
+    fi
+    
     echo -e "${MAGENTA}╚═══════════════════════════════════════════════════╝${NC}"
     echo ""
 }
@@ -91,8 +99,10 @@ show_playback_started() {
     local session_num="$2"
     local content_id="$3"
     local content_title="$4"
-    local content_type="$5"
-    local content_pos="$6"
+    local content_subtitle="$5"
+    local content_type="$6"
+    local playback_type="$7"
+    local content_pos="$8"
     local time=$(get_timestamp)
     
     # Format session number to handle different lengths
@@ -102,20 +112,29 @@ show_playback_started() {
     echo -e "${CYAN}  ┌─────────────────────────────────────────────────┐${NC}"
     echo -e "${CYAN}  │ ${header_text}  Time: ${time}  │${NC}"
     echo -e "${CYAN}  ├─────────────────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}  │${NC} Session ID: ${session_id:0:37}  ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC} Playback Session ID: ${session_id:0:27}  ${CYAN}│${NC}"
     
     # Display content metadata if available
     if [ -n "$content_id" ]; then
-        echo -e "${CYAN}  │${NC} Content ID: ${content_id:0:37}  ${CYAN}│${NC}"
+        echo -e "${CYAN}  │${NC} contentMetadata ID: ${content_id:0:28}  ${CYAN}│${NC}"
     fi
     if [ -n "$content_title" ]; then
         echo -e "${CYAN}  │${NC} Title: ${content_title:0:42}  ${CYAN}│${NC}"
     fi
+    if [ -n "$content_subtitle" ]; then
+        echo -e "${CYAN}  │${NC} subTitle: ${content_subtitle:0:39}  ${CYAN}│${NC}"
+    fi
     if [ -n "$content_type" ]; then
-        echo -e "${CYAN}  │${NC} Type: ${content_type:0:43}  ${CYAN}│${NC}"
+        echo -e "${CYAN}  │${NC} contentType: ${content_type:0:36}  ${CYAN}│${NC}"
+    fi
+    # Always show playbackType, display ❌ (invalid) if not available
+    if [ -n "$playback_type" ]; then
+        echo -e "${CYAN}  │${NC} playbackType: ${playback_type:0:35}  ${CYAN}│${NC}"
+    else
+        echo -e "${CYAN}  │${NC} playbackType: ❌ (invalid)                       ${CYAN}│${NC}"
     fi
     if [ -n "$content_pos" ]; then
-        echo -e "${CYAN}  │${NC} Start Position: ${content_pos}s                         ${CYAN}│${NC}"
+        echo -e "${CYAN}  │${NC} Start Position: ${content_pos}ms                        ${CYAN}│${NC}"
     fi
     
     echo -e "${CYAN}  └─────────────────────────────────────────────────┘${NC}"
@@ -295,7 +314,9 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         CONTENT_LOAD_ACTIVE=true
         CONTENT_ID=""
         CONTENT_TITLE=""
+        CONTENT_SUBTITLE=""
         CONTENT_TYPE=""
+        CONTENT_PLAYBACK_TYPE=""
         CONTENT_PLAYBACK_POS=""
         continue
     fi
@@ -318,9 +339,46 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
             CONTENT_TITLE="${BASH_REMATCH[1]}"
         fi
         
+        # Extract subtitle (prioritize 'subtitle' over 'originalSubtitle')
+        # 'subtitle' contains episode name, 'originalSubtitle' contains series name
+        if [[ "$line" =~ ^subtitle:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^subTitle:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^originalSubtitle:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ subtitle:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ subTitle:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ originalSubtitle:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"subtitle\":\"([^\"]+)\" ]]; then
+            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"subTitle\":\"([^\"]+)\" ]]; then
+            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"originalSubtitle\":\"([^\"]+)\" ]]; then
+            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
+        fi
+        
         # Extract contentType
         if [[ "$line" =~ ^contentType:[[:space:]]*\"([^\"]+)\" ]]; then
             CONTENT_TYPE="${BASH_REMATCH[1]}"
+        fi
+        
+        # Extract playbackType (try multiple patterns and case variations)
+        if [[ "$line" =~ ^playbackType:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^PlaybackType:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ playbackType:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ PlaybackType:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"playbackType\":\"([^\"]+)\" ]]; then
+            CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"PlaybackType\":\"([^\"]+)\" ]]; then
+            CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
         fi
         
         # Extract initialPlaybackPosition
@@ -362,8 +420,19 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         continue
     fi
     
-    # Check for playback initiation (within player session)
-    if [[ "$line" == *"$PLAYBACK_INITIATE_PATTERN"* ]] && [ "$PLAYER_ACTIVE" = true ]; then
+    # Check for playback initiation
+    if [[ "$line" == *"$PLAYBACK_INITIATE_PATTERN"* ]]; then
+        # If no player session is active (e.g., connected mid-stream), auto-create one
+        if [ "$PLAYER_ACTIVE" = false ]; then
+            PLAYER_ACTIVE=true
+            PLAYER_SESSION_START_TIME=$(date +%s)
+            PLAYER_EVENT_COUNT=0
+            PLAYBACK_SESSION_NUMBER=0
+            PLAYBACK_SESSION_IDS=()
+            LAST_EVENT_NAME=""
+            show_player_created
+        fi
+        
         # If there's already an active playback, force-close it first
         if [ "$PLAYBACK_ACTIVE" = true ]; then
             PLAYBACK_END_TIME=$(date +%s)
@@ -380,16 +449,25 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         PLAYBACK_SESSION_ID=$(extract_session_id "$line")
         LAST_EVENT_NAME=""  # Reset event repetition tracking for new playback session
         
+        # Try to extract playbackType from the event line if not already set
+        if [ -z "$CONTENT_PLAYBACK_TYPE" ]; then
+            if [[ "$line" =~ \"playbackType\":\"([^\"]+)\" ]] || [[ "$line" =~ \"PlaybackType\":\"([^\"]+)\" ]]; then
+                CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
+            fi
+        fi
+        
         # Add playback session ID to the array
         PLAYBACK_SESSION_IDS+=("$PLAYBACK_SESSION_ID")
         
-        show_playback_started "$PLAYBACK_SESSION_ID" "$PLAYBACK_SESSION_NUMBER" "$CONTENT_ID" "$CONTENT_TITLE" "$CONTENT_TYPE" "$CONTENT_PLAYBACK_POS"
+        show_playback_started "$PLAYBACK_SESSION_ID" "$PLAYBACK_SESSION_NUMBER" "$CONTENT_ID" "$CONTENT_TITLE" "$CONTENT_SUBTITLE" "$CONTENT_TYPE" "$CONTENT_PLAYBACK_TYPE" "$CONTENT_PLAYBACK_POS"
         display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
         
         # Clear content metadata after displaying
         CONTENT_ID=""
         CONTENT_TITLE=""
+        CONTENT_SUBTITLE=""
         CONTENT_TYPE=""
+        CONTENT_PLAYBACK_TYPE=""
         CONTENT_PLAYBACK_POS=""
         
         continue
@@ -426,11 +504,21 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
     
     # Display all PSDK events
     if [[ "$line" == *"PSDK::"* ]]; then
-        if [ "$PLAYER_ACTIVE" = true ]; then
-            ((PLAYER_EVENT_COUNT++))
-            if [ "$PLAYBACK_ACTIVE" = true ]; then
-                ((PLAYBACK_EVENT_COUNT++))
-            fi
+        # Auto-create player session if not active (connected mid-stream)
+        if [ "$PLAYER_ACTIVE" = false ]; then
+            PLAYER_ACTIVE=true
+            PLAYER_SESSION_START_TIME=$(date +%s)
+            PLAYER_EVENT_COUNT=0
+            PLAYBACK_SESSION_NUMBER=0
+            PLAYBACK_SESSION_IDS=()
+            LAST_EVENT_NAME=""
+            show_player_created
+        fi
+        
+        # Increment event counters
+        ((PLAYER_EVENT_COUNT++))
+        if [ "$PLAYBACK_ACTIVE" = true ]; then
+            ((PLAYBACK_EVENT_COUNT++))
         fi
         
         # Display with session number if playback is active

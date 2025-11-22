@@ -200,10 +200,58 @@ The monitor will automatically load the new patterns on next run.
 ╚═══════════════════════════════════════════════════╝
 ```
 
+## Troubleshooting Missing Fields
+
+If a field like `playbackType` is not showing in the monitor display:
+
+### 1. Check if the field exists in your logs
+
+Look at the raw telnet log file in `.temp/<session>/roku_logs_*.log`:
+
+```bash
+# Search for the field in raw logs
+grep -i "playbacktype" .temp/*/roku_logs_*.log
+
+# Or check the content load section
+grep -A 20 "Player Controller: Load" .temp/*/roku_logs_*.log
+```
+
+### 2. Verify the field format
+
+The field might be:
+- Under a different name: `PlaybackType` vs `playbackType`
+- In a nested object: `contentMetadata.PlaybackType`
+- In JSON format: `"playbackType":"value"`
+- Not present in your SDK version
+
+### 3. Update extraction pattern
+
+If the field exists but isn't extracted, check `scripts/monitor_psdk_events.sh` around line 338-350 for the extraction pattern:
+
+```bash
+# Current patterns try multiple formats:
+if [[ "$line" =~ ^playbackType:[[:space:]]*\"([^\"]+)\" ]]; then
+    CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
+elif [[ "$line" =~ ^PlaybackType:[[:space:]]*\"([^\"]+)\" ]]; then
+    CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
+# ... more patterns ...
+fi
+```
+
+### 4. Field might not be available
+
+Some fields are only available in certain scenarios:
+- `playbackType` might only appear for specific content types
+- Some metadata is optional and depends on the content source
+- SDK version differences may affect available fields
+
+**Solution**: The monitor will only display fields that are present. If a field is empty/missing, it won't show in the header. This is by design to keep the output clean.
+
 ## Notes
 
 - If `jq` is not installed, the monitor falls back to default patterns
 - The monitor script loads configuration on startup
 - No restart needed for main capture - only affects the monitor terminal
 - Configuration is version controlled and shared across the team
+- All content metadata fields are optional - they only display if present in the logs
 
