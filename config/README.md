@@ -4,33 +4,47 @@ This directory contains configuration files for the PSDK event monitor.
 
 ## monitor_config.json
 
-Controls player lifecycle tracking in the PSDK event monitor terminal.
+Controls player lifecycle tracking, content metadata validation, and display settings for the PSDK event monitor terminal.
 
-### Configuration Options
+### Configuration Structure
 
 ```json
 {
   "player_lifecycle": {
     "creation_pattern": "PlayerSDK.Core.PlayerBuilder: new",
-    "destruction_pattern": "playerSessionEndEvent",
-    "description": "Patterns to detect player creation and destruction events"
+    "destruction_pattern": "playerSessionEndEvent"
   },
   "playback_lifecycle": {
     "initiation_pattern": "playbackInitiatedEvent",
-    "end_pattern": "playbackSessionEndEvent",
-    "description": "Patterns to detect playback session start and end within player sessions"
+    "end_pattern": "playbackSessionEndEvent"
   },
   "content_metadata": {
     "load_pattern": "Player Controller: Load",
-    "fields": ["id", "title", "contentType", "initialPlaybackPosition"],
-    "description": "Pattern to detect content load events and fields to extract from contentMetadata"
+    "fields": ["id", "title", "subtitle", "contentType", "playbackType", "initialPlaybackPosition"],
+    "validation": {
+      "enabled": true,
+      "required_fields": ["id", "title", "playbackType"],
+      "optional_fields": ["subtitle", "contentType", "initialPlaybackPosition"],
+      "playback_type_enum": {
+        "enabled": true,
+        "valid_values": ["userInitiated", "AUTO", "INLINE", "continuous", 
+                         "confirmedContinuous", "confirmedEndCard", "autoPlayEndCard"]
+      },
+      "content_type_enum": {
+        "enabled": true,
+        "valid_values": ["episode", "standalone", "clip", "trailer", "live",
+                         "follow_up", "listing", "movie", "podcast", "short_preview",
+                         "promo", "extra", "standalone_event", "live_channel"]
+      }
+    }
   },
   "display": {
     "show_headers": true,
     "show_footers": true,
     "show_session_summary": true,
     "show_playback_headers": true,
-    "show_content_metadata": true
+    "show_content_metadata": true,
+    "show_validation_results": true
   }
 }
 ```
@@ -56,17 +70,54 @@ Controls player lifecycle tracking in the PSDK event monitor terminal.
 - Default: `"playbackSessionEndEvent"`
 - When detected, the monitor displays an indented **Playback Ended** footer (green)
 
-### Content Metadata Patterns
+### Content Metadata Configuration
 
 **`load_pattern`**: Text pattern that indicates content metadata is being loaded.
 - Default: `"Player Controller: Load"`
 - When detected, the monitor extracts content information to display in the playback header
-- Extracted fields include: `id`, `title`, `contentType`, `initialPlaybackPosition`
 
-**Configurable Fields:**
-- The fields to extract are defined in the `fields` array
+**`fields`**: Array of fields to extract from content metadata
+- Default: `["id", "title", "subtitle", "contentType", "playbackType", "initialPlaybackPosition"]`
 - Each field maps to a property in the content metadata structure
-- If the pattern changes, update `load_pattern` in the config
+- Add custom fields here if needed
+
+### Validation Configuration
+
+**`content_metadata.validation.enabled`**: Enable/disable all validation
+- Default: `true`
+- When enabled, validates content metadata at playback session end
+
+**`required_fields`**: Fields that MUST be present
+- Default: `["id", "title", "playbackType"]`
+- If any required field is missing, validation shows ❌ INVALID
+
+**`optional_fields`**: Fields that SHOULD be present but aren't required
+- Default: `["subtitle", "contentType", "initialPlaybackPosition"]`
+- Missing optional fields don't cause validation to fail
+
+**`playback_type_enum`**: Validates playbackType has valid enum value
+- `enabled`: Enable/disable playbackType enum validation (default: `true`)
+- `valid_values`: Array of valid playbackType values
+  - `userInitiated` - User clicked "watch now"
+  - `AUTO` - Auto-plays on page load
+  - `INLINE` - Plays within hero/tiles
+  - `continuous` - Auto-plays next asset
+  - `confirmedContinuous` - User clicked "up next"
+  - `confirmedEndCard` - Auto-plays from end card
+  - `autoPlayEndCard` - User clicked watch on end card
+
+**`content_type_enum`**: Validates contentType has valid enum value (when present)
+- `enabled`: Enable/disable contentType enum validation (default: `true`)
+- `valid_values`: Array of valid contentType values (all lowercase with underscores)
+  - `episode`, `standalone`, `clip`, `trailer`, `live`
+  - `follow_up`, `listing`, `movie`, `podcast`, `short_preview`
+  - `promo`, `extra`, `standalone_event`, `live_channel`
+
+### Display Settings
+
+**`show_validation_results`**: Show validation results in playback end footer
+- Default: `true`
+- Displays ✅ VALID or ❌ INVALID with details
 
 ### How It Works
 
@@ -88,7 +139,9 @@ Controls player lifecycle tracking in the PSDK event monitor terminal.
    - Content metadata (if available):
      - Content ID
      - Title
+     - Subtitle
      - Content Type
+     - Playback Type
      - Initial Playback Position
    - Start time
 3. Counts PSDK events specific to this playback
@@ -96,6 +149,11 @@ Controls player lifecycle tracking in the PSDK event monitor terminal.
 5. When found, displays an indented green footer with:
    - Playback duration
    - PSDK events count for this playback only
+   - **ContentMetadata validation result** (✅ VALID or ❌ INVALID)
+     - Checks required fields are present
+     - Validates playbackType enum value
+     - Validates contentType enum value (if present)
+     - Lists missing fields or invalid values
 
 **Content Metadata Extraction:**
 1. Monitor watches for `content_metadata.load_pattern` (e.g., "Player Controller: Load")
@@ -108,6 +166,55 @@ Controls player lifecycle tracking in the PSDK event monitor terminal.
 4. Stores metadata temporarily
 5. When next playback session starts, displays this metadata in the header
 6. Clears metadata after display
+
+### Quick Configuration Examples
+
+**Disable All Validation:**
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "enabled": false
+    }
+  }
+}
+```
+
+**Disable Only Enum Validation:**
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "playback_type_enum": { "enabled": false },
+      "content_type_enum": { "enabled": false }
+    }
+  }
+}
+```
+
+**Change Required Fields:**
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "required_fields": ["id", "title", "playbackType", "contentType"]
+    }
+  }
+}
+```
+
+**Add Custom Enum Values:**
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "playback_type_enum": {
+        "valid_values": ["userInitiated", "AUTO", "myCustomType"]
+      }
+    }
+  }
+}
+```
 
 ### Updating Patterns
 
@@ -165,6 +272,8 @@ The monitor will automatically load the new patterns on next run.
   ├─────────────────────────────────────────────────┤
   │ ID: 5b54b105-e336-42b8-b7e9-8199e3da06a2      │
   │ Duration: 31s | Events: 78                     │
+  ├─────────────────────────────────────────────────┤
+  │ ContentMetadata: ✅ VALID (All fields present)  │
   └─────────────────────────────────────────────────┘
 
   ┌─────────────────────────────────────────────────┐
@@ -187,6 +296,8 @@ The monitor will automatically load the new patterns on next run.
   ├─────────────────────────────────────────────────┤
   │ ID: b70514d1-4803-4c58-aaa5-b0a9d9986763      │
   │ Duration: 7s | Events: 45                      │
+  ├─────────────────────────────────────────────────┤
+  │ ContentMetadata: ✅ VALID (5/6 fields)          │
   └─────────────────────────────────────────────────┘
 
 ╔═══════════════════════════════════════════════════╗
@@ -200,7 +311,28 @@ The monitor will automatically load the new patterns on next run.
 ╚═══════════════════════════════════════════════════╝
 ```
 
-## Troubleshooting Missing Fields
+### Validation Results
+
+The monitor validates content metadata at the end of each playback session:
+
+**✅ VALID Results:**
+- `✅ VALID (All fields present)` - All required and optional fields present with valid enum values
+- `✅ VALID (5/6 fields)` - All required fields present, some optional fields missing
+
+**❌ INVALID Results:**
+- `❌ INVALID - Missing required: playbackType` - Required field(s) missing
+- `❌ INVALID - Invalid playbackType: 'bad_value'` - Invalid enum value
+- `❌ INVALID - Invalid contentType: 'INVALID'` - Invalid enum value
+
+**Validation Checks:**
+1. **Required fields** - id, title, playbackType must be present
+2. **PlaybackType enum** - Must be valid (userInitiated, AUTO, INLINE, continuous, etc.)
+3. **ContentType enum** - Must be valid if present (episode, standalone, clip, etc.)
+4. **Optional fields** - Tracked but not required (subtitle, contentType, initialPlaybackPosition)
+
+## Troubleshooting
+
+### Missing Fields
 
 If a field like `playbackType` is not showing in the monitor display:
 
@@ -247,6 +379,55 @@ Some fields are only available in certain scenarios:
 
 **Solution**: The monitor will only display fields that are present. If a field is empty/missing, it won't show in the header. This is by design to keep the output clean.
 
+### Invalid Enum Values
+
+If validation shows invalid playbackType or contentType:
+
+**Check 1: Case Sensitivity**
+- PlaybackType values are mixed case: `userInitiated`, `AUTO`, `INLINE`
+- ContentType values are lowercase: `episode`, `short_preview`
+
+```bash
+# Check exact case in logs
+grep -o 'playbackType":"[^"]*"' .temp/*/roku_logs_*.log
+grep -o 'contentType":"[^"]*"' .temp/*/roku_logs_*.log
+```
+
+**Check 2: Whitespace**
+```bash
+# Look for hidden whitespace
+grep 'playbackType' .temp/*/roku_logs_*.log | cat -A
+```
+
+**Check 3: Add Custom Values**
+If your app uses custom values, add them to the config:
+
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "playback_type_enum": {
+        "valid_values": ["userInitiated", "AUTO", "myCustomValue"]
+      }
+    }
+  }
+}
+```
+
+**Check 4: Disable Enum Validation**
+If you don't want enum validation:
+
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "playback_type_enum": { "enabled": false },
+      "content_type_enum": { "enabled": false }
+    }
+  }
+}
+```
+
 ## Notes
 
 - If `jq` is not installed, the monitor falls back to default patterns
@@ -254,4 +435,6 @@ Some fields are only available in certain scenarios:
 - No restart needed for main capture - only affects the monitor terminal
 - Configuration is version controlled and shared across the team
 - All content metadata fields are optional - they only display if present in the logs
+- Validation is configurable and can be disabled or customized per your needs
+- See `docs/5_PSDK_MONITOR.md` for complete documentation
 

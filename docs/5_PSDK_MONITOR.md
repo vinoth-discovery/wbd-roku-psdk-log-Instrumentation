@@ -199,10 +199,14 @@ The monitor automatically tracks nested session hierarchy:
 
 **Playback Ended:**
 - Detected by pattern: `playbackSessionEndEvent`
-- Displays indented yellow footer with:
+- Displays indented green footer with:
   - Playback session ID
   - Playback duration
   - PSDK events count for this playback only
+  - **ContentMetadata validation result** (✅ VALID or ❌ INVALID)
+    - Validates required fields: `id`, `title`, `playbackType`
+    - Checks optional fields: `subtitle`, `contentType`, `initialPlaybackPosition`
+    - Shows missing fields if validation fails
 
 **Key Points:**
 - Multiple playback sessions can occur within one player session
@@ -212,6 +216,38 @@ The monitor automatically tracks nested session hierarchy:
 
 **Configuration:**
 All patterns are configurable in `config/monitor_config.json` for easy updates if SDK event names change.
+
+### ContentMetadata Validation
+
+The monitor automatically validates ContentMetadata fields at the end of each playback session:
+
+**Validation Rules (configurable in `monitor_config.json`):**
+- **Required Fields**: `id`, `title`, `playbackType` (must be present for ✅ VALID)
+- **Optional Fields**: `subtitle`, `contentType`, `initialPlaybackPosition` (should be present but not required)
+
+**Validation Results:**
+- ✅ **VALID**: All required fields are present
+  - Shows count of fields present (e.g., "All fields present" or "4/6 fields")
+- ❌ **INVALID**: One or more required fields are missing
+  - Lists missing required fields and optional fields
+
+**Configuration Options:**
+```json
+{
+  "validation": {
+    "enabled": true,
+    "content_metadata": {
+      "required_fields": ["id", "title", "playbackType"],
+      "optional_fields": ["subtitle", "contentType", "initialPlaybackPosition"]
+    }
+  },
+  "display": {
+    "show_validation_results": true
+  }
+}
+```
+
+To disable validation, set `"enabled": false` in the validation section or `"show_validation_results": false` in the display section.
 
 ## Managing the Monitor Terminal
 
@@ -427,6 +463,143 @@ psdk-instrument 192.168.50.81 --duration 60
 # Watch PSDK events in monitor terminal
 # Stop early with Ctrl+C if you see what you need
 ```
+
+## Configuration
+
+All monitoring behavior is configured in `config/monitor_config.json`.
+
+### Monitor Configuration Structure
+
+```json
+{
+  "player_lifecycle": {
+    "creation_pattern": "PlayerSDK.Core.PlayerBuilder: new",
+    "destruction_pattern": "playerSessionEndEvent"
+  },
+  "playback_lifecycle": {
+    "initiation_pattern": "playbackInitiatedEvent",
+    "end_pattern": "playbackSessionEndEvent"
+  },
+  "content_metadata": {
+    "load_pattern": "Player Controller: Load",
+    "fields": ["id", "title", "subtitle", "contentType", "playbackType", "initialPlaybackPosition"],
+    "validation": {
+      "enabled": true,
+      "required_fields": ["id", "title", "playbackType"],
+      "optional_fields": ["subtitle", "contentType", "initialPlaybackPosition"],
+      "playback_type_enum": {
+        "enabled": true,
+        "valid_values": ["userInitiated", "AUTO", "INLINE", "continuous", 
+                         "confirmedContinuous", "confirmedEndCard", "autoPlayEndCard"]
+      },
+      "content_type_enum": {
+        "enabled": true,
+        "valid_values": ["episode", "standalone", "clip", "trailer", "live", 
+                         "follow_up", "listing", "movie", "podcast", "short_preview", 
+                         "promo", "extra", "standalone_event", "live_channel"]
+      }
+    }
+  },
+  "display": {
+    "show_headers": true,
+    "show_footers": true,
+    "show_validation_results": true
+  }
+}
+```
+
+### Quick Configuration Changes
+
+**Disable Validation:**
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "enabled": false
+    }
+  }
+}
+```
+
+**Disable Enum Validation Only:**
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "playback_type_enum": { "enabled": false },
+      "content_type_enum": { "enabled": false }
+    }
+  }
+}
+```
+
+**Change Required Fields:**
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "required_fields": ["id", "title", "playbackType", "contentType"]
+    }
+  }
+}
+```
+
+**Add Custom Enum Values:**
+```json
+{
+  "content_metadata": {
+    "validation": {
+      "playback_type_enum": {
+        "valid_values": ["userInitiated", "AUTO", "myCustomType"]
+      }
+    }
+  }
+}
+```
+
+### Configuration Reference
+
+| Setting | Purpose | Default |
+|---------|---------|---------|
+| `player_lifecycle.creation_pattern` | Detects player creation | `"PlayerSDK.Core.PlayerBuilder: new"` |
+| `player_lifecycle.destruction_pattern` | Detects player end | `"playerSessionEndEvent"` |
+| `playback_lifecycle.initiation_pattern` | Detects playback start | `"playbackInitiatedEvent"` |
+| `playback_lifecycle.end_pattern` | Detects playback end | `"playbackSessionEndEvent"` |
+| `content_metadata.load_pattern` | Detects content load | `"Player Controller: Load"` |
+| `content_metadata.validation.enabled` | Enable validation | `true` |
+| `content_metadata.validation.required_fields` | Required fields | `["id", "title", "playbackType"]` |
+| `content_metadata.validation.playback_type_enum.enabled` | Validate playbackType enum | `true` |
+| `content_metadata.validation.content_type_enum.enabled` | Validate contentType enum | `true` |
+| `display.show_validation_results` | Show validation in footer | `true` |
+
+### Validation Details
+
+**Validation Checks:**
+1. **Required fields** - Must be present: `id`, `title`, `playbackType`
+2. **PlaybackType enum** - Must be valid: `userInitiated`, `AUTO`, `INLINE`, `continuous`, `confirmedContinuous`, `confirmedEndCard`, `autoPlayEndCard`
+3. **ContentType enum** - Must be valid (if present): `episode`, `standalone`, `clip`, `trailer`, `live`, `follow_up`, `listing`, `movie`, `podcast`, `short_preview`, `promo`, `extra`, `standalone_event`, `live_channel`
+4. **Optional fields** - Tracked but not required: `subtitle`, `contentType`, `initialPlaybackPosition`
+
+**Validation Results:**
+- ✅ **VALID** - All required fields present with valid enum values
+- ❌ **INVALID** - Missing required fields or invalid enum values
+
+**Example Output:**
+```
+  ┌─────────────────────────────────────────────────┐
+  │   ⏹️  PLAYBACK SESSION #1 ENDED                 │
+  ├─────────────────────────────────────────────────┤
+  │ ID: 5b54b105-e336-42b8-b7e9-8199e3da06a2      │
+  │ Duration: 31s | Events: 78                     │
+  ├─────────────────────────────────────────────────┤
+  │ ContentMetadata: ✅ VALID (All fields present)  │
+  └─────────────────────────────────────────────────┘
+```
+
+For detailed validation examples and enum values, see:
+- `VALIDATION_FEATURE_SUMMARY.md` - Complete validation documentation
+- `PLAYBACK_TYPE_ENUM.md` - PlaybackType enum details
+- `CONTENT_TYPE_ENUM.md` - ContentType enum details
 
 ## See Also
 

@@ -22,6 +22,16 @@ PLAYBACK_INITIATE_PATTERN="playbackInitiatedEvent"
 PLAYBACK_END_PATTERN="playbackSessionEndEvent"
 CONTENT_LOAD_PATTERN="Player Controller: Load"
 
+# Default validation config (fallback if config not found)
+VALIDATION_ENABLED=true
+REQUIRED_FIELDS=("id" "title" "playbackType")
+OPTIONAL_FIELDS=("subtitle" "contentType" "initialPlaybackPosition")
+SHOW_VALIDATION_RESULTS=true
+PLAYBACK_TYPE_ENUM_ENABLED=true
+VALID_PLAYBACK_TYPES=("userInitiated" "AUTO" "INLINE" "continuous" "confirmedContinuous" "confirmedEndCard" "autoPlayEndCard")
+CONTENT_TYPE_ENUM_ENABLED=true
+VALID_CONTENT_TYPES=("episode" "standalone" "clip" "trailer" "live" "follow_up" "listing" "movie" "podcast" "short_preview" "promo" "extra" "standalone_event" "live_channel")
+
 # Load configuration if available
 if [ -f "$CONFIG_FILE" ]; then
     if command -v jq &> /dev/null; then
@@ -30,6 +40,32 @@ if [ -f "$CONFIG_FILE" ]; then
         PLAYBACK_INITIATE_PATTERN=$(jq -r '.playback_lifecycle.initiation_pattern' "$CONFIG_FILE" 2>/dev/null || echo "$PLAYBACK_INITIATE_PATTERN")
         PLAYBACK_END_PATTERN=$(jq -r '.playback_lifecycle.end_pattern' "$CONFIG_FILE" 2>/dev/null || echo "$PLAYBACK_END_PATTERN")
         CONTENT_LOAD_PATTERN=$(jq -r '.content_metadata.load_pattern' "$CONFIG_FILE" 2>/dev/null || echo "$CONTENT_LOAD_PATTERN")
+        
+        # Load validation configuration
+        VALIDATION_ENABLED=$(jq -r '.content_metadata.validation.enabled // true' "$CONFIG_FILE" 2>/dev/null)
+        SHOW_VALIDATION_RESULTS=$(jq -r '.display.show_validation_results // true' "$CONFIG_FILE" 2>/dev/null)
+        
+        # Load required fields array
+        if [ "$(jq -r '.content_metadata.validation.required_fields' "$CONFIG_FILE" 2>/dev/null)" != "null" ]; then
+            mapfile -t REQUIRED_FIELDS < <(jq -r '.content_metadata.validation.required_fields[]' "$CONFIG_FILE" 2>/dev/null)
+        fi
+        
+        # Load optional fields array
+        if [ "$(jq -r '.content_metadata.validation.optional_fields' "$CONFIG_FILE" 2>/dev/null)" != "null" ]; then
+            mapfile -t OPTIONAL_FIELDS < <(jq -r '.content_metadata.validation.optional_fields[]' "$CONFIG_FILE" 2>/dev/null)
+        fi
+        
+        # Load playbackType enum validation
+        PLAYBACK_TYPE_ENUM_ENABLED=$(jq -r '.content_metadata.validation.playback_type_enum.enabled // true' "$CONFIG_FILE" 2>/dev/null)
+        if [ "$(jq -r '.content_metadata.validation.playback_type_enum.valid_values' "$CONFIG_FILE" 2>/dev/null)" != "null" ]; then
+            mapfile -t VALID_PLAYBACK_TYPES < <(jq -r '.content_metadata.validation.playback_type_enum.valid_values[]' "$CONFIG_FILE" 2>/dev/null)
+        fi
+        
+        # Load contentType enum validation
+        CONTENT_TYPE_ENUM_ENABLED=$(jq -r '.content_metadata.validation.content_type_enum.enabled // true' "$CONFIG_FILE" 2>/dev/null)
+        if [ "$(jq -r '.content_metadata.validation.content_type_enum.valid_values' "$CONFIG_FILE" 2>/dev/null)" != "null" ]; then
+            mapfile -t VALID_CONTENT_TYPES < <(jq -r '.content_metadata.validation.content_type_enum.valid_values[]' "$CONFIG_FILE" 2>/dev/null)
+        fi
     fi
 fi
 
@@ -55,6 +91,15 @@ CONTENT_SUBTITLE=""
 CONTENT_TYPE=""
 CONTENT_PLAYBACK_TYPE=""
 CONTENT_PLAYBACK_POS=""
+
+# Content metadata tracking for validation (per playback session)
+declare -A SESSION_METADATA_CAPTURED  # Tracks which fields were captured
+SESSION_METADATA_ID=""
+SESSION_METADATA_TITLE=""
+SESSION_METADATA_SUBTITLE=""
+SESSION_METADATA_TYPE=""
+SESSION_METADATA_PLAYBACK_TYPE=""
+SESSION_METADATA_POS=""
 
 # Event repetition tracking
 LAST_EVENT_NAME=""
@@ -151,12 +196,33 @@ show_playback_ended() {
     # Format the duration and events line
     local stats_line=$(printf "Duration: %ss | Events: %-4s" "$duration" "$event_count")
     
+    # Get validation result
+    local validation_result=""
+    if [ "$SHOW_VALIDATION_RESULTS" = "true" ]; then
+        validation_result=$(validate_content_metadata)
+    fi
+    
     echo ""
     echo -e "${GREEN}  ┌─────────────────────────────────────────────────┐${NC}"
     echo -e "${GREEN}  │   ⏹️  PLAYBACK SESSION #${session_num} ENDED                │${NC}"
     echo -e "${GREEN}  ├─────────────────────────────────────────────────┤${NC}"
     echo -e "${GREEN}  │${NC} ID: ${session_id:0:41}  ${GREEN}│${NC}"
     echo -e "${GREEN}  │${NC} ${stats_line}                 ${GREEN}│${NC}"
+    
+    # Display validation result if enabled and available
+    if [ "$SHOW_VALIDATION_RESULTS" = "true" ] && [ -n "$validation_result" ]; then
+        echo -e "${GREEN}  ├─────────────────────────────────────────────────┤${NC}"
+        echo -e "${GREEN}  │${NC} ContentMetadata: ${validation_result:0:29}${GREEN}│${NC}"
+        # If validation result is longer than one line, show additional lines
+        if [ ${#validation_result} -gt 29 ]; then
+            local remainder="${validation_result:29}"
+            while [ -n "$remainder" ]; do
+                echo -e "${GREEN}  │${NC}   ${remainder:0:47}${GREEN}│${NC}"
+                remainder="${remainder:47}"
+            done
+        fi
+    fi
+    
     echo -e "${GREEN}  └─────────────────────────────────────────────────┘${NC}"
     echo ""
 }
@@ -179,6 +245,206 @@ show_playback_aborted() {
     echo -e "${RED}  │${NC} ${stats_line}                 ${RED}│${NC}"
     echo -e "${RED}  └─────────────────────────────────────────────────┘${NC}"
     echo ""
+}
+
+# Function to validate content metadata and return validation result
+validate_content_metadata() {
+    # Check if validation is enabled
+    if [ "$VALIDATION_ENABLED" != "true" ]; then
+        echo ""
+        return
+    fi
+    
+    local missing_required=()
+    local missing_optional=()
+    local present_count=0
+    local total_fields=$((${#REQUIRED_FIELDS[@]} + ${#OPTIONAL_FIELDS[@]}))
+    
+    # Check required fields
+    for field in "${REQUIRED_FIELDS[@]}"; do
+        case "$field" in
+            "id")
+                if [ -n "$SESSION_METADATA_ID" ]; then
+                    ((present_count++))
+                else
+                    missing_required+=("$field")
+                fi
+                ;;
+            "title")
+                if [ -n "$SESSION_METADATA_TITLE" ]; then
+                    ((present_count++))
+                else
+                    missing_required+=("$field")
+                fi
+                ;;
+            "playbackType")
+                if [ -n "$SESSION_METADATA_PLAYBACK_TYPE" ]; then
+                    ((present_count++))
+                else
+                    missing_required+=("$field")
+                fi
+                ;;
+            "subtitle")
+                if [ -n "$SESSION_METADATA_SUBTITLE" ]; then
+                    ((present_count++))
+                fi
+                ;;
+            "contentType")
+                if [ -n "$SESSION_METADATA_TYPE" ]; then
+                    ((present_count++))
+                fi
+                ;;
+            "initialPlaybackPosition")
+                if [ -n "$SESSION_METADATA_POS" ]; then
+                    ((present_count++))
+                fi
+                ;;
+        esac
+    done
+    
+    # Check optional fields
+    for field in "${OPTIONAL_FIELDS[@]}"; do
+        case "$field" in
+            "id")
+                if [ -n "$SESSION_METADATA_ID" ]; then
+                    ((present_count++))
+                else
+                    missing_optional+=("$field")
+                fi
+                ;;
+            "title")
+                if [ -n "$SESSION_METADATA_TITLE" ]; then
+                    ((present_count++))
+                else
+                    missing_optional+=("$field")
+                fi
+                ;;
+            "playbackType")
+                if [ -n "$SESSION_METADATA_PLAYBACK_TYPE" ]; then
+                    ((present_count++))
+                else
+                    missing_optional+=("$field")
+                fi
+                ;;
+            "subtitle")
+                if [ -n "$SESSION_METADATA_SUBTITLE" ]; then
+                    ((present_count++))
+                else
+                    missing_optional+=("$field")
+                fi
+                ;;
+            "contentType")
+                if [ -n "$SESSION_METADATA_TYPE" ]; then
+                    ((present_count++))
+                else
+                    missing_optional+=("$field")
+                fi
+                ;;
+            "initialPlaybackPosition")
+                if [ -n "$SESSION_METADATA_POS" ]; then
+                    ((present_count++))
+                else
+                    missing_optional+=("$field")
+                fi
+                ;;
+        esac
+    done
+    
+    # Validate playbackType enum value if enabled and field is present
+    local invalid_playback_enum=false
+    local invalid_playback_msg=""
+    
+    if [ "$PLAYBACK_TYPE_ENUM_ENABLED" = "true" ] && [ -n "$SESSION_METADATA_PLAYBACK_TYPE" ]; then
+        # Check if playbackType value is in the valid list
+        local is_valid_playback=false
+        for valid_type in "${VALID_PLAYBACK_TYPES[@]}"; do
+            if [ "$SESSION_METADATA_PLAYBACK_TYPE" = "$valid_type" ]; then
+                is_valid_playback=true
+                break
+            fi
+        done
+        
+        if [ "$is_valid_playback" = false ]; then
+            invalid_playback_enum=true
+            invalid_playback_msg="Invalid playbackType: '$SESSION_METADATA_PLAYBACK_TYPE'"
+        fi
+    fi
+    
+    # Validate contentType enum value if enabled and field is present
+    local invalid_content_enum=false
+    local invalid_content_msg=""
+    
+    if [ "$CONTENT_TYPE_ENUM_ENABLED" = "true" ] && [ -n "$SESSION_METADATA_TYPE" ]; then
+        # Check if contentType value is in the valid list
+        local is_valid_content=false
+        for valid_type in "${VALID_CONTENT_TYPES[@]}"; do
+            if [ "$SESSION_METADATA_TYPE" = "$valid_type" ]; then
+                is_valid_content=true
+                break
+            fi
+        done
+        
+        if [ "$is_valid_content" = false ]; then
+            invalid_content_enum=true
+            invalid_content_msg="Invalid contentType: '$SESSION_METADATA_TYPE'"
+        fi
+    fi
+    
+    # Build validation result string
+    local validation_result=""
+    local has_errors=false
+    
+    # Check if there are any validation errors
+    if [ ${#missing_required[@]} -gt 0 ] || [ "$invalid_playback_enum" = true ] || [ "$invalid_content_enum" = true ]; then
+        has_errors=true
+    fi
+    
+    if [ "$has_errors" = false ]; then
+        # All required fields present and valid - VALID
+        validation_result="✅ VALID"
+        if [ ${#missing_optional[@]} -gt 0 ]; then
+            validation_result="${validation_result} (${present_count}/${total_fields} fields)"
+        else
+            validation_result="${validation_result} (All fields present)"
+        fi
+    else
+        # Missing required fields or invalid enum - INVALID
+        validation_result="❌ INVALID"
+        local first_error=true
+        
+        # Add missing required fields
+        if [ ${#missing_required[@]} -gt 0 ]; then
+            validation_result="${validation_result} - Missing required: ${missing_required[*]}"
+            first_error=false
+        fi
+        
+        # Add invalid playbackType enum
+        if [ "$invalid_playback_enum" = true ]; then
+            if [ "$first_error" = true ]; then
+                validation_result="${validation_result} - ${invalid_playback_msg}"
+                first_error=false
+            else
+                validation_result="${validation_result}; ${invalid_playback_msg}"
+            fi
+        fi
+        
+        # Add invalid contentType enum
+        if [ "$invalid_content_enum" = true ]; then
+            if [ "$first_error" = true ]; then
+                validation_result="${validation_result} - ${invalid_content_msg}"
+                first_error=false
+            else
+                validation_result="${validation_result}; ${invalid_content_msg}"
+            fi
+        fi
+        
+        # Add missing optional fields
+        if [ ${#missing_optional[@]} -gt 0 ]; then
+            validation_result="${validation_result}, optional: ${missing_optional[*]}"
+        fi
+    fi
+    
+    echo "$validation_result"
 }
 
 # Function to display player destruction footer with playback session IDs
@@ -398,6 +664,14 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
             show_playback_aborted "$PLAYBACK_SESSION_ID" "$PLAYBACK_SESSION_NUMBER" "$PLAYBACK_EVENT_COUNT" "$PLAYBACK_DURATION"
             PLAYBACK_ACTIVE=false
             PLAYBACK_EVENT_COUNT=0
+            
+            # Clear session metadata when aborted
+            SESSION_METADATA_ID=""
+            SESSION_METADATA_TITLE=""
+            SESSION_METADATA_SUBTITLE=""
+            SESSION_METADATA_TYPE=""
+            SESSION_METADATA_PLAYBACK_TYPE=""
+            SESSION_METADATA_POS=""
         fi
         
         # If there was a previous player session active, end it
@@ -439,6 +713,14 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
             PLAYBACK_DURATION=$((PLAYBACK_END_TIME - PLAYBACK_SESSION_START_TIME))
             show_playback_aborted "$PLAYBACK_SESSION_ID" "$PLAYBACK_SESSION_NUMBER" "$PLAYBACK_EVENT_COUNT" "$PLAYBACK_DURATION"
             PLAYBACK_EVENT_COUNT=0
+            
+            # Clear session metadata when aborted
+            SESSION_METADATA_ID=""
+            SESSION_METADATA_TITLE=""
+            SESSION_METADATA_SUBTITLE=""
+            SESSION_METADATA_TYPE=""
+            SESSION_METADATA_PLAYBACK_TYPE=""
+            SESSION_METADATA_POS=""
         fi
         
         # Start new playback session
@@ -459,10 +741,18 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         # Add playback session ID to the array
         PLAYBACK_SESSION_IDS+=("$PLAYBACK_SESSION_ID")
         
+        # Save content metadata to session variables for validation
+        SESSION_METADATA_ID="$CONTENT_ID"
+        SESSION_METADATA_TITLE="$CONTENT_TITLE"
+        SESSION_METADATA_SUBTITLE="$CONTENT_SUBTITLE"
+        SESSION_METADATA_TYPE="$CONTENT_TYPE"
+        SESSION_METADATA_PLAYBACK_TYPE="$CONTENT_PLAYBACK_TYPE"
+        SESSION_METADATA_POS="$CONTENT_PLAYBACK_POS"
+        
         show_playback_started "$PLAYBACK_SESSION_ID" "$PLAYBACK_SESSION_NUMBER" "$CONTENT_ID" "$CONTENT_TITLE" "$CONTENT_SUBTITLE" "$CONTENT_TYPE" "$CONTENT_PLAYBACK_TYPE" "$CONTENT_PLAYBACK_POS"
         display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
         
-        # Clear content metadata after displaying
+        # Clear content metadata after displaying (but keep session metadata for validation)
         CONTENT_ID=""
         CONTENT_TITLE=""
         CONTENT_SUBTITLE=""
@@ -482,6 +772,15 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         PLAYBACK_DURATION=$((PLAYBACK_END_TIME - PLAYBACK_SESSION_START_TIME))
         show_playback_ended "$PLAYBACK_SESSION_ID" "$PLAYBACK_SESSION_NUMBER" "$PLAYBACK_EVENT_COUNT" "$PLAYBACK_DURATION"
         PLAYBACK_EVENT_COUNT=0
+        
+        # Clear session metadata after validation
+        SESSION_METADATA_ID=""
+        SESSION_METADATA_TITLE=""
+        SESSION_METADATA_SUBTITLE=""
+        SESSION_METADATA_TYPE=""
+        SESSION_METADATA_PLAYBACK_TYPE=""
+        SESSION_METADATA_POS=""
+        
         continue
     fi
     
