@@ -159,7 +159,9 @@ class RokuTelnetClient:
             # Extract line from buffer
             if b'\n' in self._buffer:
                 line, self._buffer = self._buffer.split(b'\n', 1)
-                return line.decode('utf-8', errors='ignore').strip()
+                # Use rstrip() to preserve leading whitespace (indentation) 
+                # while removing trailing whitespace (like \r)
+                return line.decode('utf-8', errors='ignore').rstrip()
             
             return None
             
