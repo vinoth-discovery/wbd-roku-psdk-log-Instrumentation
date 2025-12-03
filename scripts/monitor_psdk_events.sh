@@ -595,29 +595,28 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
             continue
         fi
         
-        # Extract id
-        if [[ "$line" =~ ^id:[[:space:]]*\"([^\"]+)\" ]]; then
+        # Extract id (handle both with and without leading whitespace)
+        if [[ "$line" =~ ^[[:space:]]*id:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_ID="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"id\":\"([^\"]+)\" ]]; then
             CONTENT_ID="${BASH_REMATCH[1]}"
         fi
         
-        # Extract title
-        if [[ "$line" =~ ^title:[[:space:]]*\"([^\"]+)\" ]]; then
+        # Extract title (handle both with and without leading whitespace)
+        if [[ "$line" =~ ^[[:space:]]*title:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_TITLE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"title\":\"([^\"]+)\" ]]; then
             CONTENT_TITLE="${BASH_REMATCH[1]}"
         fi
         
         # Extract subtitle (prioritize 'subtitle' over 'originalSubtitle')
         # 'subtitle' contains episode name, 'originalSubtitle' contains series name
-        if [[ "$line" =~ ^subtitle:[[:space:]]*\"([^\"]+)\" ]]; then
+        # Handle both with and without leading whitespace
+        if [[ "$line" =~ ^[[:space:]]*subtitle:[[:space:]]*\"([^\"]+)\" ]]; then
             CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ ^subTitle:[[:space:]]*\"([^\"]+)\" ]]; then
+        elif [[ "$line" =~ ^[[:space:]]*subTitle:[[:space:]]*\"([^\"]+)\" ]]; then
             CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ ^originalSubtitle:[[:space:]]*\"([^\"]+)\" ]]; then
-            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ subtitle:[[:space:]]*\"([^\"]+)\" ]]; then
-            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ subTitle:[[:space:]]*\"([^\"]+)\" ]]; then
-            CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ originalSubtitle:[[:space:]]*\"([^\"]+)\" ]]; then
+        elif [[ "$line" =~ ^[[:space:]]*originalSubtitle:[[:space:]]*\"([^\"]+)\" ]]; then
             CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
         elif [[ "$line" =~ \"subtitle\":\"([^\"]+)\" ]]; then
             CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
@@ -627,19 +626,17 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
             CONTENT_SUBTITLE="${BASH_REMATCH[1]}"
         fi
         
-        # Extract contentType
-        if [[ "$line" =~ ^contentType:[[:space:]]*\"([^\"]+)\" ]]; then
+        # Extract contentType (handle both with and without leading whitespace)
+        if [[ "$line" =~ ^[[:space:]]*contentType:[[:space:]]*\"([^\"]+)\" ]]; then
+            CONTENT_TYPE="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"contentType\":\"([^\"]+)\" ]]; then
             CONTENT_TYPE="${BASH_REMATCH[1]}"
         fi
         
-        # Extract playbackType (try multiple patterns and case variations)
-        if [[ "$line" =~ ^playbackType:[[:space:]]*\"([^\"]+)\" ]]; then
+        # Extract playbackType (handle leading whitespace and case variations)
+        if [[ "$line" =~ ^[[:space:]]*playbackType:[[:space:]]*\"([^\"]+)\" ]]; then
             CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ ^PlaybackType:[[:space:]]*\"([^\"]+)\" ]]; then
-            CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ playbackType:[[:space:]]*\"([^\"]+)\" ]]; then
-            CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ PlaybackType:[[:space:]]*\"([^\"]+)\" ]]; then
+        elif [[ "$line" =~ ^[[:space:]]*PlaybackType:[[:space:]]*\"([^\"]+)\" ]]; then
             CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
         elif [[ "$line" =~ \"playbackType\":\"([^\"]+)\" ]]; then
             CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
@@ -647,8 +644,10 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
             CONTENT_PLAYBACK_TYPE="${BASH_REMATCH[1]}"
         fi
         
-        # Extract initialPlaybackPosition
-        if [[ "$line" =~ ^initialPlaybackPosition:[[:space:]]*([0-9]+) ]]; then
+        # Extract initialPlaybackPosition (handle leading whitespace)
+        if [[ "$line" =~ ^[[:space:]]*initialPlaybackPosition:[[:space:]]*([0-9]+) ]]; then
+            CONTENT_PLAYBACK_POS="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"initialPlaybackPosition\":([0-9]+) ]]; then
             CONTENT_PLAYBACK_POS="${BASH_REMATCH[1]}"
         fi
         
