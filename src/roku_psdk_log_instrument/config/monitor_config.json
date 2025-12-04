@@ -1,0 +1,62 @@
+{
+  "player_lifecycle": {
+    "creation_pattern": "PlayerSDK.Core.PlayerBuilder: new",
+    "destruction_pattern": "playerSessionEndEvent",
+    "description": "Patterns to detect player creation and destruction events"
+  },
+  "playback_lifecycle": {
+    "initiation_pattern": "playbackInitiatedEvent",
+    "end_pattern": "playbackSessionEndEvent",
+    "description": "Patterns to detect playback session start and end within player sessions"
+  },
+  "content_metadata": {
+    "load_pattern": "Player Controller: Load",
+    "fields": ["id", "title", "subtitle", "contentType", "playbackType", "initialPlaybackPosition"],
+    "description": "Pattern to detect content load events and fields to extract from contentMetadata. Note: 'subtitle' (episode name) is prioritized over 'originalSubtitle' (series name)",
+    "validation": {
+      "enabled": true,
+      "required_fields": ["id", "title", "playbackType"],
+      "optional_fields": ["subtitle", "contentType", "initialPlaybackPosition"],
+      "playback_type_enum": {
+        "enabled": true,
+        "valid_values": [
+          "userInitiated",
+          "AUTO",
+          "INLINE",
+          "continuous",
+          "confirmedContinuous",
+          "confirmedEndCard",
+          "autoPlayEndCard"
+        ]
+      },
+      "content_type_enum": {
+        "enabled": true,
+        "valid_values": [
+          "episode",
+          "standalone",
+          "clip",
+          "trailer",
+          "live",
+          "follow_up",
+          "listing",
+          "movie",
+          "podcast",
+          "short_preview",
+          "promo",
+          "extra",
+          "standalone_event",
+          "live_channel"
+        ]
+      }
+    }
+  },
+  "display": {
+    "show_headers": true,
+    "show_footers": true,
+    "show_session_summary": true,
+    "show_playback_headers": true,
+    "show_content_metadata": true,
+    "show_validation_results": true
+  }
+}
+

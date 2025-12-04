@@ -14,9 +14,57 @@ from roku_psdk_log_instrument.telnet.client import RokuTelnetClient
 from roku_psdk_log_instrument.telnet.session_manager import SessionManager
 
 
+def get_monitor_script_path() -> Optional[Path]:
+    """
+    Find the monitor script path, checking multiple locations.
+    
+    Returns:
+        Path to monitor script if found, None otherwise
+    """
+    # Try multiple paths to find the monitor script
+    possible_paths = [
+        # Installed package: scripts inside package
+        Path(__file__).parent / "scripts" / "monitor_psdk_events.sh",
+        # Development mode: relative to source file (4 levels up)
+        Path(__file__).parent.parent.parent.parent / "scripts" / "monitor_psdk_events.sh",
+        # From current working directory
+        Path.cwd() / "scripts" / "monitor_psdk_events.sh",
+    ]
+    
+    for path in possible_paths:
+        if path.exists():
+            return path
+    
+    return None
+
+
+def get_config_path() -> Optional[Path]:
+    """
+    Find the monitor config path, checking multiple locations.
+    
+    Returns:
+        Path to config file if found, None otherwise
+    """
+    possible_paths = [
+        # Installed package: config inside package
+        Path(__file__).parent / "config" / "monitor_config.json",
+        # Development mode: relative to source file (4 levels up)
+        Path(__file__).parent.parent.parent.parent / "config" / "monitor_config.json",
+        # From current working directory
+        Path.cwd() / "config" / "monitor_config.json",
+    ]
+    
+    for path in possible_paths:
+        if path.exists():
+            return path
+    
+    return None
+
+
 def launch_psdk_monitor(log_file_path: str) -> Optional[subprocess.Popen]:
     """
     Launch a new terminal window to monitor PSDK events.
+    Cross-platform support for macOS, Linux, and Windows.
     
     Args:
         log_file_path: Path to the log file to monitor
@@ -25,48 +73,72 @@ def launch_psdk_monitor(log_file_path: str) -> Optional[subprocess.Popen]:
         Subprocess object if successful, None otherwise
     """
     try:
-        # Try multiple paths to find the monitor script
-        possible_paths = [
-            # Development mode: relative to source file
-            Path(__file__).parent.parent.parent.parent / "scripts" / "monitor_psdk_events.sh",
-            # From current working directory
-            Path.cwd() / "scripts" / "monitor_psdk_events.sh",
-            # User's home directory (if running from there)
-            Path.home() / "Library" / "CloudStorage" / "OneDrive-WarnerBros.Discovery" / "Git" / "AI & Automation" / "wbd-roku-psdk-log-instrument" / "scripts" / "monitor_psdk_events.sh"
-        ]
-        
-        monitor_script = None
-        for path in possible_paths:
-            if path.exists():
-                monitor_script = path
-                break
+        monitor_script = get_monitor_script_path()
         
         if not monitor_script:
-            click.echo(f"⚠️  Warning: Monitor script not found. Tried:")
-            for path in possible_paths:
-                click.echo(f"  - {path}")
+            click.echo(f"⚠️  Warning: Monitor script not found.")
+            click.echo(f"   Checked locations:")
+            click.echo(f"   - {Path(__file__).parent / 'scripts' / 'monitor_psdk_events.sh'}")
+            click.echo(f"   - {Path.cwd() / 'scripts' / 'monitor_psdk_events.sh'}")
             return None
         
-        # Launch new Terminal window on macOS with the monitor script
-        applescript = f'''
-        tell application "Terminal"
-            do script "'{monitor_script}' '{log_file_path}'"
-            activate
-        end tell
-        '''
+        # Make script executable
+        monitor_script.chmod(0o755)
         
-        # Run AppleScript and capture output for debugging
-        result = subprocess.run(
-            ['osascript', '-e', applescript],
-            capture_output=True,
-            text=True
-        )
+        # Detect platform and launch appropriate terminal
+        platform = sys.platform
         
-        if result.returncode != 0:
-            click.echo(f"⚠️  AppleScript error: {result.stderr}")
+        if platform == "darwin":
+            # macOS: Use AppleScript to open Terminal
+            applescript = f'''
+            tell application "Terminal"
+                do script "'{monitor_script}' '{log_file_path}'"
+                activate
+            end tell
+            '''
+            
+            result = subprocess.run(
+                ['osascript', '-e', applescript],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                click.echo(f"⚠️  AppleScript error: {result.stderr}")
+                return None
+            
+            return subprocess.Popen(['sleep', '0'])  # Return dummy process
+            
+        elif platform.startswith("linux"):
+            # Linux: Try multiple terminal emulators
+            terminals = [
+                ['gnome-terminal', '--', 'bash', '-c', f"'{monitor_script}' '{log_file_path}'; exec bash"],
+                ['xterm', '-e', f"'{monitor_script}' '{log_file_path}'"],
+                ['konsole', '-e', f"'{monitor_script}' '{log_file_path}'"],
+                ['xfce4-terminal', '-e', f"'{monitor_script}' '{log_file_path}'"],
+            ]
+            
+            for term_cmd in terminals:
+                try:
+                    # Check if terminal exists
+                    if subprocess.run(['which', term_cmd[0]], capture_output=True).returncode == 0:
+                        return subprocess.Popen(term_cmd)
+                except Exception:
+                    continue
+            
+            click.echo("⚠️  No supported terminal emulator found (tried: gnome-terminal, xterm, konsole, xfce4-terminal)")
             return None
-        
-        return subprocess.Popen(['sleep', '0'])  # Return dummy process
+            
+        elif platform == "win32":
+            # Windows: Use cmd or PowerShell
+            # Note: The bash script won't work on Windows without WSL or Git Bash
+            click.echo("⚠️  Windows is not fully supported. Monitor requires bash.")
+            click.echo("   Try running with WSL or Git Bash.")
+            return None
+            
+        else:
+            click.echo(f"⚠️  Unsupported platform: {platform}")
+            return None
         
     except Exception as e:
         click.echo(f"⚠️  Could not launch PSDK monitor: {e}")
