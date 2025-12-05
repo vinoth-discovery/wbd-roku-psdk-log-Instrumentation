@@ -572,11 +572,15 @@ display_log_with_timestamp() {
 # Check if log file path is provided
 if [ -z "$1" ]; then
     echo "Error: No log file specified"
-    echo "Usage: $0 <log_file_path>"
+    echo "Usage: $0 <log_file_path> [pattern1] [pattern2] ..."
     exit 1
 fi
 
 LOG_FILE="$1"
+shift  # Remove log file from arguments, remaining are custom patterns
+
+# Store custom patterns in an array
+CUSTOM_PATTERNS=("$@")
 
 # Wait for log file to be created
 echo "Waiting for log file: $LOG_FILE"
@@ -586,6 +590,12 @@ done
 
 # Show initial header
 show_initial_header "$LOG_FILE"
+
+# Show custom patterns if provided
+if [ ${#CUSTOM_PATTERNS[@]} -gt 0 ]; then
+    echo -e "${MAGENTA}📌 Custom Patterns: ${CUSTOM_PATTERNS[*]}${NC}"
+    echo ""
+fi
 
 # Monitor the log file and filter for PSDK events
 tail -f "$LOG_FILE" | while IFS= read -r line; do
@@ -814,10 +824,30 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         continue
     fi
     
-    # Display all PSDK events
+    # Check if line matches PSDK:: or any custom pattern
+    matches_pattern=false
+    is_custom_pattern=false
+    
+    # Check for PSDK:: events
     if [[ "$line" == *"PSDK::"* ]]; then
-        # Auto-create player session if not active (connected mid-stream)
-        if [ "$PLAYER_ACTIVE" = false ]; then
+        matches_pattern=true
+    fi
+    
+    # Check for custom patterns if provided
+    if [ ${#CUSTOM_PATTERNS[@]} -gt 0 ]; then
+        for pattern in "${CUSTOM_PATTERNS[@]}"; do
+            if [[ "$line" == *"$pattern"* ]]; then
+                matches_pattern=true
+                is_custom_pattern=true
+                break
+            fi
+        done
+    fi
+    
+    # Display matching events
+    if [ "$matches_pattern" = true ]; then
+        # Auto-create player session if not active (connected mid-stream) - only for PSDK events
+        if [[ "$line" == *"PSDK::"* ]] && [ "$PLAYER_ACTIVE" = false ]; then
             PLAYER_ACTIVE=true
             PLAYER_SESSION_START_TIME=$(date +%s)
             PLAYER_EVENT_COUNT=0
@@ -827,14 +857,20 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
             show_player_created
         fi
         
-        # Increment event counters
-        ((PLAYER_EVENT_COUNT++))
-        if [ "$PLAYBACK_ACTIVE" = true ]; then
-            ((PLAYBACK_EVENT_COUNT++))
+        # Increment event counters only for PSDK events
+        if [[ "$line" == *"PSDK::"* ]]; then
+            ((PLAYER_EVENT_COUNT++))
+            if [ "$PLAYBACK_ACTIVE" = true ]; then
+                ((PLAYBACK_EVENT_COUNT++))
+            fi
         fi
         
         # Display with session number if playback is active
-        if [ "$PLAYBACK_ACTIVE" = true ]; then
+        if [ "$is_custom_pattern" = true ]; then
+            # Custom pattern: show full line with special formatting
+            custom_timestamp=$(get_timestamp)
+            echo -e "${CYAN}[${custom_timestamp}]${NC} ${MAGENTA}[CUSTOM]${NC} $line"
+        elif [ "$PLAYBACK_ACTIVE" = true ]; then
             display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
         else
             display_log_with_timestamp "$line" 0

@@ -61,13 +61,14 @@ def get_config_path() -> Optional[Path]:
     return None
 
 
-def launch_psdk_monitor(log_file_path: str) -> Optional[subprocess.Popen]:
+def launch_psdk_monitor(log_file_path: str, custom_patterns: tuple = ()) -> Optional[subprocess.Popen]:
     """
     Launch a new terminal window to monitor PSDK events.
     Cross-platform support for macOS, Linux, and Windows.
     
     Args:
         log_file_path: Path to the log file to monitor
+        custom_patterns: Optional tuple of custom filter patterns to match
         
     Returns:
         Subprocess object if successful, None otherwise
@@ -85,6 +86,13 @@ def launch_psdk_monitor(log_file_path: str) -> Optional[subprocess.Popen]:
         # Make script executable
         monitor_script.chmod(0o755)
         
+        # Build pattern arguments for the script
+        # Format: script log_file [pattern1] [pattern2] ...
+        pattern_args = ' '.join([f"'{p}'" for p in custom_patterns]) if custom_patterns else ''
+        script_cmd = f"'{monitor_script}' '{log_file_path}'"
+        if pattern_args:
+            script_cmd = f"{script_cmd} {pattern_args}"
+        
         # Detect platform and launch appropriate terminal
         platform = sys.platform
         
@@ -92,7 +100,7 @@ def launch_psdk_monitor(log_file_path: str) -> Optional[subprocess.Popen]:
             # macOS: Use AppleScript to open Terminal
             applescript = f'''
             tell application "Terminal"
-                do script "'{monitor_script}' '{log_file_path}'"
+                do script "{script_cmd}"
                 activate
             end tell
             '''
@@ -112,10 +120,10 @@ def launch_psdk_monitor(log_file_path: str) -> Optional[subprocess.Popen]:
         elif platform.startswith("linux"):
             # Linux: Try multiple terminal emulators
             terminals = [
-                ['gnome-terminal', '--', 'bash', '-c', f"'{monitor_script}' '{log_file_path}'; exec bash"],
-                ['xterm', '-e', f"'{monitor_script}' '{log_file_path}'"],
-                ['konsole', '-e', f"'{monitor_script}' '{log_file_path}'"],
-                ['xfce4-terminal', '-e', f"'{monitor_script}' '{log_file_path}'"],
+                ['gnome-terminal', '--', 'bash', '-c', f"{script_cmd}; exec bash"],
+                ['xterm', '-e', f"{script_cmd}"],
+                ['konsole', '-e', f"{script_cmd}"],
+                ['xfce4-terminal', '-e', f"{script_cmd}"],
             ]
             
             for term_cmd in terminals:
@@ -370,8 +378,9 @@ def parse(log_file: str, output: Optional[str]) -> None:
 @click.option("--description", help="Session description")
 @click.option("--port", "-p", default=8085, help="Telnet port (default: 8085)")
 @click.option("--monitor/--no-monitor", default=True, help="Launch PSDK event monitor in separate terminal (default: on)")
+@click.option("--pattern", "-f", multiple=True, help="Custom filter pattern(s) to show in monitor terminal (e.g., --pattern '[PLAYER_SDK]' --pattern 'ERROR')")
 @click.version_option(version="0.1.0")
-def live_main(host: str, duration: Optional[int], description: Optional[str], port: int, monitor: bool) -> None:
+def live_main(host: str, duration: Optional[int], description: Optional[str], port: int, monitor: bool, pattern: tuple) -> None:
     """
     PSDK Instrument - Live Roku log capture and viewer.
     
@@ -451,8 +460,11 @@ def live_main(host: str, duration: Optional[int], description: Optional[str], po
             # Launch monitor on first log line received (confirms connection is working)
             if not monitor_launched and monitor:
                 with output_lock:
-                    click.echo("\n🚀 Launching PSDK Event Monitor...\n")
-                    monitor_process = launch_psdk_monitor(str(log_file))
+                    if pattern:
+                        click.echo(f"\n🚀 Launching PSDK Event Monitor with custom patterns: {', '.join(pattern)}...\n")
+                    else:
+                        click.echo("\n🚀 Launching PSDK Event Monitor...\n")
+                    monitor_process = launch_psdk_monitor(str(log_file), pattern)
                     if monitor_process:
                         click.echo("✓ PSDK Monitor launched successfully\n")
                     else:
