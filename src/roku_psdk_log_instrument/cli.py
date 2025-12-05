@@ -472,10 +472,25 @@ def live_main(host: str, duration: Optional[int], description: Optional[str], po
                     monitor_launched = True
             
             # Highlight PSDK logs in yellow, everything else in white
+            # Add visual separation for different log types
             with output_lock:
+                # Check if this is a new log entry (starts with INFO:, WARN:, ERROR:, DEBUG:, etc.)
+                is_new_entry = line.startswith(('INFO:', 'WARN:', 'WARNING:', 'ERROR:', 'DEBUG:', 'PSDK::'))
+                
                 if 'PSDK::' in line:
+                    if is_new_entry:
+                        click.echo()  # Blank line before PSDK events
                     click.echo(click.style(line, fg='yellow'))
+                elif line.startswith('ERROR:') or 'error' in line.lower():
+                    click.echo(click.style(line, fg='red'))
+                elif line.startswith(('WARN:', 'WARNING:')):
+                    click.echo(click.style(line, fg='bright_yellow'))
+                elif is_new_entry:
+                    # Add blank line before new log entries for separation
+                    click.echo()
+                    click.echo(line)
                 else:
+                    # Continuation lines (values, etc.) - no blank line
                     click.echo(line)
         
         # Start log capture in background thread

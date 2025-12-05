@@ -175,7 +175,7 @@ show_playback_started() {
     
     # Display content metadata if available
     if [ -n "$content_id" ]; then
-        echo -e "${CYAN}  │${NC} contentMetadata ID: ${content_id:0:28}  ${CYAN}│${NC}"
+        echo -e "${CYAN}  │${NC} ID(editId): ${content_id:0:36}  ${CYAN}│${NC}"
     fi
     if [ -n "$content_title" ]; then
         echo -e "${CYAN}  │${NC} Title: ${content_title:0:42}  ${CYAN}│${NC}"
@@ -553,14 +553,15 @@ display_log_with_timestamp() {
     
     # Display with appropriate color
     if [ "$is_repeat" = true ]; then
-        # Grey color for repeated events
+        # Grey color for repeated events (no blank line for repeats)
         if [ "$session_num" -gt 0 ]; then
             echo -e "${CYAN}[${timestamp}]${NC} ${YELLOW}[S${session_num}]${NC} ${GREY}${event_name}${NC}"
         else
             echo -e "${CYAN}[${timestamp}]${NC} ${GREY}${event_name}${NC}"
         fi
     else
-        # Normal color for new/different events
+        # New/different event - add blank line for visual separation
+        echo ""
         if [ "$session_num" -gt 0 ]; then
             echo -e "${CYAN}[${timestamp}]${NC} ${YELLOW}[S${session_num}]${NC} ${event_name}"
         else
@@ -865,15 +866,23 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
             fi
         fi
         
-        # Display with session number if playback is active
+        # Display custom pattern matches
         if [ "$is_custom_pattern" = true ]; then
-            # Custom pattern: show full line with special formatting
+            # Custom pattern: show full line with special formatting (with blank line for separation)
+            echo ""
             custom_timestamp=$(get_timestamp)
             echo -e "${CYAN}[${custom_timestamp}]${NC} ${MAGENTA}[CUSTOM]${NC} $line"
-        elif [ "$PLAYBACK_ACTIVE" = true ]; then
-            display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
-        else
-            display_log_with_timestamp "$line" 0
+            # Reset last event name so next PSDK event gets proper spacing
+            LAST_EVENT_NAME=""
+        fi
+        
+        # Display PSDK events (separate from custom - a line can match both)
+        if [[ "$line" == *"PSDK::"* ]] && [ "$is_custom_pattern" = false ]; then
+            if [ "$PLAYBACK_ACTIVE" = true ]; then
+                display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
+            else
+                display_log_with_timestamp "$line" 0
+            fi
         fi
     fi
 done
