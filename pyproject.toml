@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wbd-roku-psdk-log-instrument"
-version = "0.1.5"
+version = "0.1.6"
 description = "A tool for instrumenting and validating Roku PSDK logs"
 readme = "README.md"
 requires-python = ">=3.8"

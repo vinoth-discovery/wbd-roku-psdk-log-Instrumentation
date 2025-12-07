@@ -164,39 +164,47 @@ show_playback_started() {
     local content_pos="$8"
     local time=$(get_timestamp)
     
-    # Format session number to handle different lengths
-    local header_text="▶️  PLAYBACK SESSION #${session_num} STARTED"
+    # Helper function to format a box row with exact width (65 chars for full UUIDs)
+    format_row() {
+        local content="$1"
+        local width=65
+        local len=${#content}
+        if [ $len -gt $width ]; then
+            content="${content:0:$((width-3))}..."
+        fi
+        printf "  ${CYAN}│${NC} %-65s ${CYAN}│${NC}\n" "$content"
+    }
     
     echo ""
-    echo -e "${CYAN}  ┌─────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}  │ ${header_text}  Time: ${time}  │${NC}"
-    echo -e "${CYAN}  ├─────────────────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}  │${NC} Playback Session ID: ${session_id:0:27}  ${CYAN}│${NC}"
+    echo -e "  ${CYAN}┌───────────────────────────────────────────────────────────────────┐${NC}"
+    format_row "▶️  PLAYBACK #${session_num}  Time: ${time}"
+    echo -e "  ${CYAN}├───────────────────────────────────────────────────────────────────┤${NC}"
+    format_row "Session: ${session_id}"
     
     # Display content metadata if available
     if [ -n "$content_id" ]; then
-        echo -e "${CYAN}  │${NC} ID(editId): ${content_id:0:36}  ${CYAN}│${NC}"
+        format_row "ID(editId): ${content_id}"
     fi
     if [ -n "$content_title" ]; then
-        echo -e "${CYAN}  │${NC} Title: ${content_title:0:42}  ${CYAN}│${NC}"
+        format_row "Title: ${content_title}"
     fi
     if [ -n "$content_subtitle" ]; then
-        echo -e "${CYAN}  │${NC} subTitle: ${content_subtitle:0:39}  ${CYAN}│${NC}"
+        format_row "Subtitle: ${content_subtitle}"
     fi
     if [ -n "$content_type" ]; then
-        echo -e "${CYAN}  │${NC} contentType: ${content_type:0:36}  ${CYAN}│${NC}"
+        format_row "contentType: ${content_type}"
     fi
     # Always show playbackType, display ❌ (invalid) if not available
     if [ -n "$playback_type" ]; then
-        echo -e "${CYAN}  │${NC} playbackType: ${playback_type:0:35}  ${CYAN}│${NC}"
+        format_row "playbackType: ${playback_type}"
     else
-        echo -e "${CYAN}  │${NC} playbackType: ❌ (invalid)                       ${CYAN}│${NC}"
+        format_row "playbackType: ❌ (missing)"
     fi
     if [ -n "$content_pos" ]; then
-        echo -e "${CYAN}  │${NC} Start Position: ${content_pos}ms                        ${CYAN}│${NC}"
+        format_row "Start Position: ${content_pos}ms"
     fi
     
-    echo -e "${CYAN}  └─────────────────────────────────────────────────┘${NC}"
+    echo -e "  ${CYAN}└───────────────────────────────────────────────────────────────────┘${NC}"
     echo ""
 }
 
@@ -216,28 +224,27 @@ show_playback_ended() {
         validation_result=$(validate_content_metadata)
     fi
     
+    # Helper function for footer rows
+    format_footer_row() {
+        local content="$1"
+        local color="$2"
+        printf "  ${color}│${NC} %-65s ${color}│${NC}\n" "$content"
+    }
+    
     echo ""
-    echo -e "${GREEN}  ┌─────────────────────────────────────────────────┐${NC}"
-    echo -e "${GREEN}  │   ⏹️  PLAYBACK SESSION #${session_num} ENDED                │${NC}"
-    echo -e "${GREEN}  ├─────────────────────────────────────────────────┤${NC}"
-    echo -e "${GREEN}  │${NC} ID: ${session_id:0:41}  ${GREEN}│${NC}"
-    echo -e "${GREEN}  │${NC} ${stats_line}                 ${GREEN}│${NC}"
+    echo -e "${GREEN}  ┌───────────────────────────────────────────────────────────────────┐${NC}"
+    format_footer_row "⏹️  PLAYBACK SESSION #${session_num} ENDED" "${GREEN}"
+    echo -e "${GREEN}  ├───────────────────────────────────────────────────────────────────┤${NC}"
+    format_footer_row "Session: ${session_id}" "${GREEN}"
+    format_footer_row "${stats_line}" "${GREEN}"
     
     # Display validation result if enabled and available
     if [ "$SHOW_VALIDATION_RESULTS" = "true" ] && [ -n "$validation_result" ]; then
-        echo -e "${GREEN}  ├─────────────────────────────────────────────────┤${NC}"
-        echo -e "${GREEN}  │${NC} ContentMetadata: ${validation_result:0:29}${GREEN}│${NC}"
-        # If validation result is longer than one line, show additional lines
-        if [ ${#validation_result} -gt 29 ]; then
-            local remainder="${validation_result:29}"
-            while [ -n "$remainder" ]; do
-                echo -e "${GREEN}  │${NC}   ${remainder:0:47}${GREEN}│${NC}"
-                remainder="${remainder:47}"
-            done
-        fi
+        echo -e "${GREEN}  ├───────────────────────────────────────────────────────────────────┤${NC}"
+        format_footer_row "ContentMetadata: ${validation_result}" "${GREEN}"
     fi
     
-    echo -e "${GREEN}  └─────────────────────────────────────────────────┘${NC}"
+    echo -e "${GREEN}  └───────────────────────────────────────────────────────────────────┘${NC}"
     echo ""
 }
 
@@ -251,13 +258,19 @@ show_playback_aborted() {
     # Format the duration and events line
     local stats_line=$(printf "Duration: %ss | Events: %-4s" "$duration" "$event_count")
     
+    # Helper function for aborted footer rows
+    format_aborted_row() {
+        local content="$1"
+        printf "  ${RED}│${NC} %-65s ${RED}│${NC}\n" "$content"
+    }
+    
     echo ""
-    echo -e "${RED}  ┌─────────────────────────────────────────────────┐${NC}"
-    echo -e "${RED}  │   ⚠️  PLAYBACK SESSION #${session_num} ABORTED (no end)      │${NC}"
-    echo -e "${RED}  ├─────────────────────────────────────────────────┤${NC}"
-    echo -e "${RED}  │${NC} ID: ${session_id:0:41}  ${RED}│${NC}"
-    echo -e "${RED}  │${NC} ${stats_line}                 ${RED}│${NC}"
-    echo -e "${RED}  └─────────────────────────────────────────────────┘${NC}"
+    echo -e "${RED}  ┌───────────────────────────────────────────────────────────────────┐${NC}"
+    format_aborted_row "⚠️  PLAYBACK SESSION #${session_num} ABORTED (no end event)"
+    echo -e "${RED}  ├───────────────────────────────────────────────────────────────────┤${NC}"
+    format_aborted_row "Session: ${session_id}"
+    format_aborted_row "${stats_line}"
+    echo -e "${RED}  └───────────────────────────────────────────────────────────────────┘${NC}"
     echo ""
 }
 

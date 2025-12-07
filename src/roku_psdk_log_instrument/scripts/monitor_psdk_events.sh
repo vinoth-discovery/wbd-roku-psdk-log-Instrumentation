@@ -164,39 +164,47 @@ show_playback_started() {
     local content_pos="$8"
     local time=$(get_timestamp)
     
-    # Format session number to handle different lengths
-    local header_text="▶️  PLAYBACK SESSION #${session_num} STARTED"
+    # Helper function to format a box row with exact width
+    format_row() {
+        local content="$1"
+        local width=47
+        local len=${#content}
+        if [ $len -gt $width ]; then
+            content="${content:0:$((width-3))}..."
+        fi
+        printf "  ${CYAN}│${NC} %-47s ${CYAN}│${NC}\n" "$content"
+    }
     
     echo ""
-    echo -e "${CYAN}  ┌─────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}  │ ${header_text}  Time: ${time}  │${NC}"
-    echo -e "${CYAN}  ├─────────────────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}  │${NC} Playback Session ID: ${session_id:0:27}  ${CYAN}│${NC}"
+    echo -e "  ${CYAN}┌─────────────────────────────────────────────────┐${NC}"
+    format_row "▶️  PLAYBACK #${session_num}  Time: ${time}"
+    echo -e "  ${CYAN}├─────────────────────────────────────────────────┤${NC}"
+    format_row "Session: ${session_id}"
     
     # Display content metadata if available
     if [ -n "$content_id" ]; then
-        echo -e "${CYAN}  │${NC} ID(editId): ${content_id:0:36}  ${CYAN}│${NC}"
+        format_row "ID(editId): ${content_id}"
     fi
     if [ -n "$content_title" ]; then
-        echo -e "${CYAN}  │${NC} Title: ${content_title:0:42}  ${CYAN}│${NC}"
+        format_row "Title: ${content_title}"
     fi
     if [ -n "$content_subtitle" ]; then
-        echo -e "${CYAN}  │${NC} subTitle: ${content_subtitle:0:39}  ${CYAN}│${NC}"
+        format_row "Subtitle: ${content_subtitle}"
     fi
     if [ -n "$content_type" ]; then
-        echo -e "${CYAN}  │${NC} contentType: ${content_type:0:36}  ${CYAN}│${NC}"
+        format_row "contentType: ${content_type}"
     fi
     # Always show playbackType, display ❌ (invalid) if not available
     if [ -n "$playback_type" ]; then
-        echo -e "${CYAN}  │${NC} playbackType: ${playback_type:0:35}  ${CYAN}│${NC}"
+        format_row "playbackType: ${playback_type}"
     else
-        echo -e "${CYAN}  │${NC} playbackType: ❌ (invalid)                       ${CYAN}│${NC}"
+        format_row "playbackType: ❌ (missing)"
     fi
     if [ -n "$content_pos" ]; then
-        echo -e "${CYAN}  │${NC} Start Position: ${content_pos}ms                        ${CYAN}│${NC}"
+        format_row "Start Position: ${content_pos}ms"
     fi
     
-    echo -e "${CYAN}  └─────────────────────────────────────────────────┘${NC}"
+    echo -e "  ${CYAN}└─────────────────────────────────────────────────┘${NC}"
     echo ""
 }
 
