@@ -75,6 +75,11 @@
       "beam.events.playback.buffer_1.4": ["buffer.action", "buffer.type"],
       "beam.events.playback.statechange_1.4": ["stateChange.action", "playhead.contentPosition", "playhead.streamPosition"]
     }
+  },
+  "isdk_validation": {
+    "enabled": true,
+    "description": "ISDK validation settings triggered on PLAYER_EXIT state change",
+    "show_event_list": true
   }
 }
 

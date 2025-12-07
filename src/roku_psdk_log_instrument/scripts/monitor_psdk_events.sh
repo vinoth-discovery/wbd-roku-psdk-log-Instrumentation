@@ -46,6 +46,10 @@ VALID_PLAYBACK_TYPES=("userInitiated" "AUTO" "INLINE" "continuous" "confirmedCon
 CONTENT_TYPE_ENUM_ENABLED=true
 VALID_CONTENT_TYPES=("episode" "standalone" "clip" "trailer" "live" "follow_up" "listing" "movie" "podcast" "short_preview" "promo" "extra" "standalone_event" "live_channel")
 
+# Default ISDK validation config
+ISDK_VALIDATION_ENABLED=true
+ISDK_SHOW_EVENT_LIST=true
+
 # Load configuration if available
 if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     if command -v jq &> /dev/null; then
@@ -59,26 +63,38 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         VALIDATION_ENABLED=$(jq -r '.content_metadata.validation.enabled // true' "$CONFIG_FILE" 2>/dev/null)
         SHOW_VALIDATION_RESULTS=$(jq -r '.display.show_validation_results // true' "$CONFIG_FILE" 2>/dev/null)
         
-        # Load required fields array
+        # Load required fields array (bash 3.2 compatible)
         if [ "$(jq -r '.content_metadata.validation.required_fields' "$CONFIG_FILE" 2>/dev/null)" != "null" ]; then
-            mapfile -t REQUIRED_FIELDS < <(jq -r '.content_metadata.validation.required_fields[]' "$CONFIG_FILE" 2>/dev/null)
+            REQUIRED_FIELDS=()
+            while IFS= read -r field; do
+                REQUIRED_FIELDS+=("$field")
+            done < <(jq -r '.content_metadata.validation.required_fields[]' "$CONFIG_FILE" 2>/dev/null)
         fi
         
-        # Load optional fields array
+        # Load optional fields array (bash 3.2 compatible)
         if [ "$(jq -r '.content_metadata.validation.optional_fields' "$CONFIG_FILE" 2>/dev/null)" != "null" ]; then
-            mapfile -t OPTIONAL_FIELDS < <(jq -r '.content_metadata.validation.optional_fields[]' "$CONFIG_FILE" 2>/dev/null)
+            OPTIONAL_FIELDS=()
+            while IFS= read -r field; do
+                OPTIONAL_FIELDS+=("$field")
+            done < <(jq -r '.content_metadata.validation.optional_fields[]' "$CONFIG_FILE" 2>/dev/null)
         fi
         
-        # Load playbackType enum validation
+        # Load playbackType enum validation (bash 3.2 compatible)
         PLAYBACK_TYPE_ENUM_ENABLED=$(jq -r '.content_metadata.validation.playback_type_enum.enabled // true' "$CONFIG_FILE" 2>/dev/null)
         if [ "$(jq -r '.content_metadata.validation.playback_type_enum.valid_values' "$CONFIG_FILE" 2>/dev/null)" != "null" ]; then
-            mapfile -t VALID_PLAYBACK_TYPES < <(jq -r '.content_metadata.validation.playback_type_enum.valid_values[]' "$CONFIG_FILE" 2>/dev/null)
+            VALID_PLAYBACK_TYPES=()
+            while IFS= read -r val; do
+                VALID_PLAYBACK_TYPES+=("$val")
+            done < <(jq -r '.content_metadata.validation.playback_type_enum.valid_values[]' "$CONFIG_FILE" 2>/dev/null)
         fi
         
-        # Load contentType enum validation
+        # Load contentType enum validation (bash 3.2 compatible)
         CONTENT_TYPE_ENUM_ENABLED=$(jq -r '.content_metadata.validation.content_type_enum.enabled // true' "$CONFIG_FILE" 2>/dev/null)
         if [ "$(jq -r '.content_metadata.validation.content_type_enum.valid_values' "$CONFIG_FILE" 2>/dev/null)" != "null" ]; then
-            mapfile -t VALID_CONTENT_TYPES < <(jq -r '.content_metadata.validation.content_type_enum.valid_values[]' "$CONFIG_FILE" 2>/dev/null)
+            VALID_CONTENT_TYPES=()
+            while IFS= read -r val; do
+                VALID_CONTENT_TYPES+=("$val")
+            done < <(jq -r '.content_metadata.validation.content_type_enum.valid_values[]' "$CONFIG_FILE" 2>/dev/null)
         fi
         
         # Load event fields configuration
@@ -86,6 +102,10 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         
         # Store the full config for per-event field lookup
         EVENT_FIELDS_CONFIG="$CONFIG_FILE"
+        
+        # Load ISDK validation configuration
+        ISDK_VALIDATION_ENABLED=$(jq -r '.isdk_validation.enabled // true' "$CONFIG_FILE" 2>/dev/null)
+        ISDK_SHOW_EVENT_LIST=$(jq -r '.isdk_validation.show_event_list // true' "$CONFIG_FILE" 2>/dev/null)
     fi
 fi
 
@@ -139,9 +159,12 @@ CONTENT_PLAYBACK_TYPE=""
 CONTENT_PLAYBACK_POS=""
 
 # Content metadata tracking for validation (per playback session)
-declare -A SESSION_METADATA_CAPTURED  # Tracks which fields were captured
 SESSION_METADATA_ID=""
 SESSION_METADATA_TITLE=""
+
+# ISDK event tracking for validation
+ISDK_EVENT_LIST=""           # Comma-separated list of ISDK event names
+ISDK_EVENT_COUNT=0           # Count of ISDK events
 SESSION_METADATA_SUBTITLE=""
 SESSION_METADATA_TYPE=""
 SESSION_METADATA_PLAYBACK_TYPE=""
@@ -394,6 +417,71 @@ show_playback_aborted() {
     box_line "Duration: ${duration}s | Events: ${event_count}" "${RED}"
     echo -e "${RED}  └───────────────────────────────────────────────────────────────────┘${NC}"
     echo ""
+}
+
+# Function to display ISDK validation summary on PLAYER_EXIT (in right column)
+show_isdk_validation() {
+    # Check if ISDK validation is enabled
+    if [ "$ISDK_VALIDATION_ENABLED" != "true" ]; then
+        return
+    fi
+    
+    # Right column line helper (displays in ISDK column)
+    isdk_line() {
+        local content="$1"
+        printf "%-${COL_WIDTH}s ${MAGENTA}│${NC} ${MAGENTA}${content}${NC}\n" ""
+    }
+    
+    echo ""
+    isdk_line "┌─────────────────────────────────────────────────┐"
+    isdk_line "│ ISDK VALIDATION SUMMARY                         │"
+    isdk_line "├─────────────────────────────────────────────────┤"
+    
+    # List of unique ISDK events seen (if enabled)
+    if [ "$ISDK_SHOW_EVENT_LIST" = "true" ]; then
+        isdk_line "│ Events Captured: ${ISDK_EVENT_COUNT}                              │"
+        isdk_line "├─────────────────────────────────────────────────┤"
+        
+        if [ -n "$ISDK_EVENT_LIST" ]; then
+            # Get unique events from comma-separated list
+            local unique_list=""
+            local IFS=','
+            for evt in $ISDK_EVENT_LIST; do
+                # Check if evt is already in unique_list
+                if [[ ",$unique_list," != *",$evt,"* ]]; then
+                    if [ -n "$unique_list" ]; then
+                        unique_list="${unique_list},${evt}"
+                    else
+                        unique_list="$evt"
+                    fi
+                fi
+            done
+            
+            # Count and display unique events
+            local evt_count=0
+            local total_unique=$(echo "$unique_list" | tr ',' '\n' | wc -l | tr -d ' ')
+            for evt in $unique_list; do
+                ((evt_count++))
+                # Truncate event name if too long
+                local display_evt="${evt:0:45}"
+                if [ $evt_count -eq $total_unique ]; then
+                    printf "%-${COL_WIDTH}s ${MAGENTA}│${NC} ${MAGENTA}│${NC}   └ ${CYAN}${display_evt}${NC}\n" ""
+                else
+                    printf "%-${COL_WIDTH}s ${MAGENTA}│${NC} ${MAGENTA}│${NC}   ├ ${CYAN}${display_evt}${NC}\n" ""
+                fi
+            done
+        else
+            isdk_line "│   (No ISDK events captured)                    │"
+        fi
+    fi
+    
+    isdk_line "└─────────────────────────────────────────────────┘"
+}
+
+# Function to reset ISDK tracking for new playback
+reset_isdk_tracking() {
+    ISDK_EVENT_LIST=""
+    ISDK_EVENT_COUNT=0
 }
 
 # Function to validate content metadata and return validation result
@@ -1036,6 +1124,7 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         ((PLAYBACK_SESSION_NUMBER++))
         PLAYBACK_SESSION_ID=$(extract_session_id "$line")
         LAST_EVENT_NAME=""  # Reset event repetition tracking for new playback session
+        reset_isdk_tracking  # Reset ISDK tracking for new playback
         
         # Try to extract playbackType from the event line if not already set
         if [ -z "$CONTENT_PLAYBACK_TYPE" ]; then
@@ -1167,6 +1256,33 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
                 display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
             else
                 display_log_with_timestamp "$line" 0
+            fi
+        fi
+        
+        # Track ISDK events for validation
+        if [[ "$line" == *"[PSDK::ISDK]"* ]]; then
+            ((ISDK_EVENT_COUNT++))
+            
+            # Extract ISDK event name (stop before "payload" or "{")
+            if [[ "$line" =~ \[PSDK::ISDK\][[:space:]]*Event:[[:space:]]*([a-zA-Z0-9_.]+) ]]; then
+                isdk_event_name="${BASH_REMATCH[1]}"
+                # Strip "payload" suffix if present (no space between event name and payload)
+                isdk_event_name="${isdk_event_name%payload}"
+                # Append to comma-separated list
+                if [ -n "$ISDK_EVENT_LIST" ]; then
+                    ISDK_EVENT_LIST="${ISDK_EVENT_LIST},${isdk_event_name}"
+                else
+                    ISDK_EVENT_LIST="$isdk_event_name"
+                fi
+                
+                # Check for PLAYER_EXIT state change - trigger ISDK validation
+                if [[ "$isdk_event_name" == *"statechange"* ]]; then
+                    state_action=$(extract_json_field "$line" "stateChange.action")
+                    if [ "$state_action" = "PLAYER_EXIT" ]; then
+                        show_isdk_validation
+                        reset_isdk_tracking
+                    fi
+                fi
             fi
         fi
     fi
