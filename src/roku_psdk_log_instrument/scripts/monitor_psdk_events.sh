@@ -80,8 +80,40 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         if [ "$(jq -r '.content_metadata.validation.content_type_enum.valid_values' "$CONFIG_FILE" 2>/dev/null)" != "null" ]; then
             mapfile -t VALID_CONTENT_TYPES < <(jq -r '.content_metadata.validation.content_type_enum.valid_values[]' "$CONFIG_FILE" 2>/dev/null)
         fi
+        
+        # Load event fields configuration
+        EVENT_FIELDS_ENABLED=$(jq -r '.event_fields.enabled // false' "$CONFIG_FILE" 2>/dev/null)
+        
+        # Store the full config for per-event field lookup
+        EVENT_FIELDS_CONFIG="$CONFIG_FILE"
     fi
 fi
+
+# Function to get fields for a specific event name
+get_event_fields() {
+    local event_name="$1"
+    local is_isdk="$2"
+    local config_path
+    
+    if [ "$is_isdk" = true ]; then
+        config_path=".event_fields.isdk_events"
+    else
+        config_path=".event_fields.psdk_events"
+    fi
+    
+    # Try to get fields for specific event name
+    local fields=$(jq -r "${config_path}.\"${event_name}\" // empty" "$EVENT_FIELDS_CONFIG" 2>/dev/null)
+    
+    # If no specific config, use default
+    if [ -z "$fields" ] || [ "$fields" = "null" ]; then
+        fields=$(jq -r "${config_path}.default // empty" "$EVENT_FIELDS_CONFIG" 2>/dev/null)
+    fi
+    
+    # Output fields as array
+    if [ -n "$fields" ] && [ "$fields" != "null" ]; then
+        echo "$fields" | jq -r '.[]' 2>/dev/null
+    fi
+}
 
 # Player session tracking
 PLAYER_ACTIVE=false
@@ -121,15 +153,17 @@ LAST_EVENT_NAME=""
 # Function to display initial header
 show_initial_header() {
     clear
-    echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════${NC}"
     echo -e "${CYAN}  PSDK Event Monitor - Player Lifecycle Tracking${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "${GREEN}📊 Monitoring: $1${NC}"
     echo -e "${GREEN}🔍 Tracking: Player creation & destruction${NC}"
     echo -e "${GREEN}⚙️  Config: $(basename "$CONFIG_FILE")${NC}"
     echo ""
-    echo -e "${CYAN}───────────────────────────────────────────────────${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────${MAGENTA}┬${CYAN}───────────────────────────────────────────────────${NC}"
+    printf "${CYAN}%-58s${MAGENTA}│${NC} %-50s\n" "  PSDK Events" "  ISDK Events"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────${MAGENTA}┼${CYAN}───────────────────────────────────────────────────${NC}"
     echo ""
 }
 
@@ -152,6 +186,13 @@ show_player_created() {
     echo ""
 }
 
+# Function to display column headers for PSDK | ISDK layout (forward declaration)
+show_column_headers() {
+    echo -e "${CYAN}───────────────────────────────────────────────────────────────────────────────${MAGENTA}┬${CYAN}───────────────────────────────────────────────────${NC}"
+    printf "${CYAN}  %-77s${MAGENTA}│${NC} %-50s\n" "PSDK Events" "ISDK Events"
+    echo -e "${CYAN}───────────────────────────────────────────────────────────────────────────────${MAGENTA}┼${CYAN}───────────────────────────────────────────────────${NC}"
+}
+
 # Function to display playback session started
 show_playback_started() {
     local session_id="$1"
@@ -164,48 +205,50 @@ show_playback_started() {
     local content_pos="$8"
     local time=$(get_timestamp)
     
-    # Helper function to format a box row with exact width
-    format_row() {
+    # Box line helper with proper width calculation
+    box_line() {
         local content="$1"
-        local width=47
-        local len=${#content}
-        if [ $len -gt $width ]; then
-            content="${content:0:$((width-3))}..."
-        fi
-        printf "  ${CYAN}│${NC} %-47s ${CYAN}│${NC}\n" "$content"
+        local color="$2"
+        local width=67
+        local padding=$((width - ${#content}))
+        if [ $padding -lt 0 ]; then padding=0; fi
+        local spaces=$(printf '%*s' $padding '')
+        echo -e "  ${color}│${NC} ${content}${spaces}${color}│${NC}"
     }
     
     echo ""
-    echo -e "  ${CYAN}┌─────────────────────────────────────────────────┐${NC}"
-    format_row "▶️  PLAYBACK #${session_num}  Time: ${time}"
-    echo -e "  ${CYAN}├─────────────────────────────────────────────────┤${NC}"
-    format_row "Session: ${session_id}"
+    echo -e "  ${CYAN}┌───────────────────────────────────────────────────────────────────┐${NC}"
+    box_line "PLAYBACK #${session_num} STARTED  Time: ${time}" "${CYAN}"
+    echo -e "  ${CYAN}├───────────────────────────────────────────────────────────────────┤${NC}"
+    box_line "Session: ${session_id}" "${CYAN}"
     
     # Display content metadata if available
     if [ -n "$content_id" ]; then
-        format_row "ID(editId): ${content_id}"
+        box_line "ID(editId): ${content_id}" "${CYAN}"
     fi
     if [ -n "$content_title" ]; then
-        format_row "Title: ${content_title}"
+        box_line "Title: ${content_title}" "${CYAN}"
     fi
     if [ -n "$content_subtitle" ]; then
-        format_row "Subtitle: ${content_subtitle}"
+        box_line "Subtitle: ${content_subtitle}" "${CYAN}"
     fi
     if [ -n "$content_type" ]; then
-        format_row "contentType: ${content_type}"
+        box_line "contentType: ${content_type}" "${CYAN}"
     fi
-    # Always show playbackType, display ❌ (invalid) if not available
+    # Always show playbackType
     if [ -n "$playback_type" ]; then
-        format_row "playbackType: ${playback_type}"
+        box_line "playbackType: ${playback_type}" "${CYAN}"
     else
-        format_row "playbackType: ❌ (missing)"
+        box_line "playbackType: (missing)" "${CYAN}"
     fi
     if [ -n "$content_pos" ]; then
-        format_row "Start Position: ${content_pos}ms"
+        box_line "Start Position: ${content_pos}ms" "${CYAN}"
     fi
     
-    echo -e "  ${CYAN}└─────────────────────────────────────────────────┘${NC}"
+    echo -e "  ${CYAN}└───────────────────────────────────────────────────────────────────┘${NC}"
     echo ""
+    # Show column headers after playback started
+    show_column_headers
 }
 
 # Function to display playback session ended (proper completion)
@@ -215,37 +258,113 @@ show_playback_ended() {
     local event_count="$3"
     local duration="$4"
     
-    # Format the duration and events line
-    local stats_line=$(printf "Duration: %ss | Events: %-4s" "$duration" "$event_count")
+    # Helper function for footer rows (67 char box width)
+    format_row() {
+        local content="$1"
+        local color="$2"
+        # Print content and pad to fixed width, accounting for emoji width issues
+        echo -e "  ${color}│${NC} ${content}"
+    }
     
-    # Get validation result
-    local validation_result=""
-    if [ "$SHOW_VALIDATION_RESULTS" = "true" ]; then
-        validation_result=$(validate_content_metadata)
-    fi
+    # Box line helper
+    box_line() {
+        local content="$1"
+        local color="$2"
+        local width=67
+        local padding=$((width - ${#content}))
+        if [ $padding -lt 0 ]; then padding=0; fi
+        local spaces=$(printf '%*s' $padding '')
+        echo -e "  ${color}│${NC} ${content}${spaces}${color}│${NC}"
+    }
     
     echo ""
-    echo -e "${GREEN}  ┌─────────────────────────────────────────────────┐${NC}"
-    echo -e "${GREEN}  │   ⏹️  PLAYBACK SESSION #${session_num} ENDED                │${NC}"
-    echo -e "${GREEN}  ├─────────────────────────────────────────────────┤${NC}"
-    echo -e "${GREEN}  │${NC} ID: ${session_id:0:41}  ${GREEN}│${NC}"
-    echo -e "${GREEN}  │${NC} ${stats_line}                 ${GREEN}│${NC}"
+    echo -e "${GREEN}  ┌───────────────────────────────────────────────────────────────────┐${NC}"
+    box_line "PLAYBACK SESSION #${session_num} ENDED" "${GREEN}"
+    echo -e "${GREEN}  ├───────────────────────────────────────────────────────────────────┤${NC}"
+    box_line "Session: ${session_id}" "${GREEN}"
+    box_line "Duration: ${duration}s | Events: ${event_count}" "${GREEN}"
     
-    # Display validation result if enabled and available
-    if [ "$SHOW_VALIDATION_RESULTS" = "true" ] && [ -n "$validation_result" ]; then
-        echo -e "${GREEN}  ├─────────────────────────────────────────────────┤${NC}"
-        echo -e "${GREEN}  │${NC} ContentMetadata: ${validation_result:0:29}${GREEN}│${NC}"
-        # If validation result is longer than one line, show additional lines
-        if [ ${#validation_result} -gt 29 ]; then
-            local remainder="${validation_result:29}"
-            while [ -n "$remainder" ]; do
-                echo -e "${GREEN}  │${NC}   ${remainder:0:47}${GREEN}│${NC}"
-                remainder="${remainder:47}"
+    # Display validation results if enabled
+    if [ "$SHOW_VALIDATION_RESULTS" = "true" ] && [ "$VALIDATION_ENABLED" = "true" ]; then
+        echo -e "${GREEN}  ├───────────────────────────────────────────────────────────────────┤${NC}"
+        
+        # Perform validation and display line by line
+        local has_errors=false
+        local missing_required=()
+        local missing_optional=()
+        local invalid_playback_type=""
+        local invalid_content_type=""
+        
+        # Check required fields
+        for field in "${REQUIRED_FIELDS[@]}"; do
+            case "$field" in
+                "id") [ -z "$SESSION_METADATA_ID" ] && missing_required+=("id") ;;
+                "title") [ -z "$SESSION_METADATA_TITLE" ] && missing_required+=("title") ;;
+                "playbackType") [ -z "$SESSION_METADATA_PLAYBACK_TYPE" ] && missing_required+=("playbackType") ;;
+            esac
+        done
+        
+        # Check optional fields
+        for field in "${OPTIONAL_FIELDS[@]}"; do
+            case "$field" in
+                "subtitle") [ -z "$SESSION_METADATA_SUBTITLE" ] && missing_optional+=("subtitle") ;;
+                "contentType") [ -z "$SESSION_METADATA_TYPE" ] && missing_optional+=("contentType") ;;
+                "initialPlaybackPosition") [ -z "$SESSION_METADATA_POS" ] && missing_optional+=("initialPlaybackPosition") ;;
+            esac
+        done
+        
+        # Validate playbackType enum
+        if [ "$PLAYBACK_TYPE_ENUM_ENABLED" = "true" ] && [ -n "$SESSION_METADATA_PLAYBACK_TYPE" ]; then
+            local is_valid=false
+            for valid_type in "${VALID_PLAYBACK_TYPES[@]}"; do
+                [ "$SESSION_METADATA_PLAYBACK_TYPE" = "$valid_type" ] && is_valid=true && break
             done
+            [ "$is_valid" = false ] && invalid_playback_type="$SESSION_METADATA_PLAYBACK_TYPE"
+        fi
+        
+        # Validate contentType enum
+        if [ "$CONTENT_TYPE_ENUM_ENABLED" = "true" ] && [ -n "$SESSION_METADATA_TYPE" ]; then
+            local is_valid=false
+            for valid_type in "${VALID_CONTENT_TYPES[@]}"; do
+                [ "$SESSION_METADATA_TYPE" = "$valid_type" ] && is_valid=true && break
+            done
+            [ "$is_valid" = false ] && invalid_content_type="$SESSION_METADATA_TYPE"
+        fi
+        
+        # Determine if valid or invalid
+        if [ ${#missing_required[@]} -gt 0 ] || [ -n "$invalid_playback_type" ] || [ -n "$invalid_content_type" ]; then
+            has_errors=true
+        fi
+        
+        # Display validation header
+        if [ "$has_errors" = true ]; then
+            box_line "ContentMetadata Validation: INVALID" "${GREEN}"
+        else
+            local present=$((${#REQUIRED_FIELDS[@]} + ${#OPTIONAL_FIELDS[@]} - ${#missing_optional[@]}))
+            local total=$((${#REQUIRED_FIELDS[@]} + ${#OPTIONAL_FIELDS[@]}))
+            if [ ${#missing_optional[@]} -eq 0 ]; then
+                box_line "ContentMetadata Validation: VALID (All fields present)" "${GREEN}"
+            else
+                box_line "ContentMetadata Validation: VALID (${present}/${total} fields)" "${GREEN}"
+            fi
+        fi
+        
+        # Display line-by-line validation details
+        if [ ${#missing_required[@]} -gt 0 ]; then
+            box_line "  - Missing required: ${missing_required[*]}" "${GREEN}"
+        fi
+        if [ -n "$invalid_playback_type" ]; then
+            box_line "  - Invalid playbackType: '${invalid_playback_type}'" "${GREEN}"
+        fi
+        if [ -n "$invalid_content_type" ]; then
+            box_line "  - Invalid contentType: '${invalid_content_type}'" "${GREEN}"
+        fi
+        if [ ${#missing_optional[@]} -gt 0 ]; then
+            box_line "  - Missing optional: ${missing_optional[*]}" "${GREEN}"
         fi
     fi
     
-    echo -e "${GREEN}  └─────────────────────────────────────────────────┘${NC}"
+    echo -e "${GREEN}  └───────────────────────────────────────────────────────────────────┘${NC}"
     echo ""
 }
 
@@ -256,16 +375,24 @@ show_playback_aborted() {
     local event_count="$3"
     local duration="$4"
     
-    # Format the duration and events line
-    local stats_line=$(printf "Duration: %ss | Events: %-4s" "$duration" "$event_count")
+    # Box line helper with proper width calculation
+    box_line() {
+        local content="$1"
+        local color="$2"
+        local width=67
+        local padding=$((width - ${#content}))
+        if [ $padding -lt 0 ]; then padding=0; fi
+        local spaces=$(printf '%*s' $padding '')
+        echo -e "  ${color}│${NC} ${content}${spaces}${color}│${NC}"
+    }
     
     echo ""
-    echo -e "${RED}  ┌─────────────────────────────────────────────────┐${NC}"
-    echo -e "${RED}  │   ⚠️  PLAYBACK SESSION #${session_num} ABORTED (no end)      │${NC}"
-    echo -e "${RED}  ├─────────────────────────────────────────────────┤${NC}"
-    echo -e "${RED}  │${NC} ID: ${session_id:0:41}  ${RED}│${NC}"
-    echo -e "${RED}  │${NC} ${stats_line}                 ${RED}│${NC}"
-    echo -e "${RED}  └─────────────────────────────────────────────────┘${NC}"
+    echo -e "${RED}  ┌───────────────────────────────────────────────────────────────────┐${NC}"
+    box_line "PLAYBACK SESSION #${session_num} ABORTED (no end event)" "${RED}"
+    echo -e "${RED}  ├───────────────────────────────────────────────────────────────────┤${NC}"
+    box_line "Session: ${session_id}" "${RED}"
+    box_line "Duration: ${duration}s | Events: ${event_count}" "${RED}"
+    echo -e "${RED}  └───────────────────────────────────────────────────────────────────┘${NC}"
     echo ""
 }
 
@@ -527,9 +654,15 @@ get_timestamp() {
 extract_event_name() {
     local line="$1"
     
-    # Try to extract event name from "key <eventName>" pattern
+    # Try to extract event name from "key <eventName>" pattern (e.g., "PSDK:: key playbackInitiatedEvent value:")
     if [[ "$line" =~ key[[:space:]]+([a-zA-Z0-9_]+) ]]; then
         echo "${BASH_REMATCH[1]}"
+        return
+    fi
+    
+    # Try to extract from [PSDK::ISDK] Event: pattern (e.g., "[PSDK::ISDK] Event: beam.events.playback.initiated_3.3payload")
+    if [[ "$line" =~ \[PSDK::ISDK\][[:space:]]*Event:[[:space:]]*([a-zA-Z0-9_.]+) ]]; then
+        echo "[ISDK] ${BASH_REMATCH[1]}"
         return
     fi
     
@@ -543,12 +676,128 @@ extract_event_name() {
     echo "$line"
 }
 
+# Fixed column widths for two-column display
+COL_WIDTH=75
+
+# Function to extract a field value from JSON in a log line
+# Supports nested fields like "content.editId" or "playback.trigger"
+extract_json_field() {
+    local line="$1"
+    local field="$2"
+    local value=""
+    
+    # Extract JSON portion from the line (between { and })
+    local json=""
+    if [[ "$line" =~ \{.*\} ]]; then
+        json="${BASH_REMATCH[0]}"
+    fi
+    
+    if [ -z "$json" ]; then
+        echo ""
+        return
+    fi
+    
+    # Handle nested fields (e.g., content.editId -> "content":{"editId":"value"})
+    if [[ "$field" == *"."* ]]; then
+        local parent="${field%%.*}"
+        local child="${field#*.}"
+        
+        # First, extract the parent object content
+        # Match "parent":{...} and capture everything inside
+        if [[ "$json" =~ \"$parent\":\{([^{}]*(\{[^{}]*\}[^{}]*)*)\} ]]; then
+            local parent_content="${BASH_REMATCH[1]}"
+            # Now extract the child field from the parent content
+            if [[ "$parent_content" =~ \"$child\":\"([^\"]+)\" ]]; then
+                value="${BASH_REMATCH[1]}"
+            elif [[ "$parent_content" =~ \"$child\":([^,}\"]+) ]]; then
+                value="${BASH_REMATCH[1]}"
+            fi
+        fi
+    else
+        # Simple field extraction
+        if [[ "$json" =~ \"$field\":\"([^\"]+)\" ]]; then
+            value="${BASH_REMATCH[1]}"
+        elif [[ "$json" =~ \"$field\":([^,}\"]+) ]]; then
+            value="${BASH_REMATCH[1]}"
+        fi
+    fi
+    
+    echo "$value"
+}
+
+# Function to display event fields
+display_event_fields() {
+    local line="$1"
+    local is_isdk="$2"
+    local event_name="$3"
+    
+    if [ "$EVENT_FIELDS_ENABLED" != "true" ]; then
+        return
+    fi
+    
+    # Get fields for this specific event (or default)
+    local fields_array=()
+    while IFS= read -r field; do
+        [ -n "$field" ] && fields_array+=("$field")
+    done < <(get_event_fields "$event_name" "$is_isdk")
+    
+    if [ ${#fields_array[@]} -eq 0 ]; then
+        return
+    fi
+    
+    local num_fields=${#fields_array[@]}
+    local field_idx=0
+    local displayed_count=0
+    
+    # First pass: count how many fields have values
+    local fields_with_values=()
+    for field in "${fields_array[@]}"; do
+        local value=$(extract_json_field "$line" "$field")
+        if [ -n "$value" ]; then
+            fields_with_values+=("$field:$value")
+        fi
+    done
+    
+    local total_with_values=${#fields_with_values[@]}
+    local display_idx=0
+    
+    for fv in "${fields_with_values[@]}"; do
+        ((display_idx++))
+        local field="${fv%%:*}"
+        local value="${fv#*:}"
+        
+        local tree_char="├"
+        if [ $display_idx -eq $total_with_values ]; then
+            tree_char="└"
+        fi
+        
+        if [ "$is_isdk" = true ]; then
+            # Right column field
+            printf "%-${COL_WIDTH}s ${MAGENTA}│${NC}     ${GREY}${tree_char} ${field}: ${value}${NC}\n" ""
+        else
+            # Left column field - calculate padding to align separator
+            local field_line="     ${tree_char} ${field}: ${value}"
+            local field_len=${#field_line}
+            local padding=$((COL_WIDTH - field_len))
+            if [ $padding -lt 0 ]; then padding=0; fi
+            printf "     ${GREY}${tree_char} ${field}: ${value}${NC}%${padding}s ${MAGENTA}│${NC}\n" ""
+        fi
+    done
+}
+
 # Function to display log line with timestamp (showing only event name)
+# Two-column layout: PSDK events left, ISDK events right
 display_log_with_timestamp() {
     local line="$1"
     local session_num="${2:-0}"  # Optional session number, defaults to 0
     local timestamp=$(get_timestamp)
     local event_name=$(extract_event_name "$line")
+    
+    # Check if this is an ISDK event
+    local is_isdk=false
+    if [[ "$line" == *"[PSDK::ISDK]"* ]]; then
+        is_isdk=true
+    fi
     
     # Check if this event is a repeat of the last one
     local is_repeat=false
@@ -559,23 +808,48 @@ display_log_with_timestamp() {
     # Update last event
     LAST_EVENT_NAME="$event_name"
     
-    # Display with appropriate color
-    if [ "$is_repeat" = true ]; then
-        # Grey color for repeated events (no blank line for repeats)
-        if [ "$session_num" -gt 0 ]; then
-            echo -e "${CYAN}[${timestamp}]${NC} ${YELLOW}[S${session_num}]${NC} ${GREY}${event_name}${NC}"
-        else
-            echo -e "${CYAN}[${timestamp}]${NC} ${GREY}${event_name}${NC}"
+    # Format the event display
+    local session_prefix=""
+    if [ "$session_num" -gt 0 ]; then
+        session_prefix="[S${session_num}] "
+    fi
+    
+    # Build the display string
+    local display_str="${session_prefix}${event_name}"
+    
+    # Extract raw event name for config lookup (without [ISDK] prefix)
+    local raw_event_name="$event_name"
+    if [[ "$event_name" == "[ISDK] "* ]]; then
+        raw_event_name="${event_name#\[ISDK\] }"
+    fi
+    
+    # Two-column display
+    if [ "$is_isdk" = true ]; then
+        # ISDK event - show in RIGHT column
+        if [ "$is_repeat" != true ]; then
+            echo ""
         fi
+        # Empty left column, separator, then ISDK event
+        printf "%-${COL_WIDTH}s ${MAGENTA}│${NC} ${CYAN}[%s]${NC} ${YELLOW}%s${NC}\n" "" "$timestamp" "$display_str"
+        # Display configured fields for this event
+        display_event_fields "$line" true "$raw_event_name"
     else
-        # New/different event - add blank line for visual separation
-        echo ""
-        if [ "$session_num" -gt 0 ]; then
-            echo -e "${CYAN}[${timestamp}]${NC} ${YELLOW}[S${session_num}]${NC} ${event_name}"
+        # PSDK event - show in LEFT column
+        if [ "$is_repeat" = true ]; then
+            # Grey for repeated events
+            printf "${CYAN}[%s]${NC} ${GREY}%-$((COL_WIDTH-15))s${NC} ${MAGENTA}│${NC}\n" "$timestamp" "$display_str"
         else
-            echo -e "${CYAN}[${timestamp}]${NC} ${event_name}"
+            echo ""
+            printf "${CYAN}[%s]${NC} ${YELLOW}%-$((COL_WIDTH-15))s${NC} ${MAGENTA}│${NC}\n" "$timestamp" "$display_str"
+            # Display configured fields for this event (only for non-repeated events)
+            display_event_fields "$line" false "$raw_event_name"
         fi
     fi
+}
+
+# Function to flush any pending events (placeholder for compatibility)
+flush_pending_psdk() {
+    : # No-op - no longer buffering
 }
 
 # Check if log file path is provided
@@ -781,6 +1055,7 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         SESSION_METADATA_PLAYBACK_TYPE="$CONTENT_PLAYBACK_TYPE"
         SESSION_METADATA_POS="$CONTENT_PLAYBACK_POS"
         
+        flush_pending_psdk
         show_playback_started "$PLAYBACK_SESSION_ID" "$PLAYBACK_SESSION_NUMBER" "$CONTENT_ID" "$CONTENT_TITLE" "$CONTENT_SUBTITLE" "$CONTENT_TYPE" "$CONTENT_PLAYBACK_TYPE" "$CONTENT_PLAYBACK_POS"
         display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
         
@@ -799,6 +1074,7 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
     if [[ "$line" == *"$PLAYBACK_END_PATTERN"* ]] && [ "$PLAYBACK_ACTIVE" = true ]; then
         # Show the log line first, then the footer
         display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
+        flush_pending_psdk
         PLAYBACK_ACTIVE=false
         PLAYBACK_END_TIME=$(date +%s)
         PLAYBACK_DURATION=$((PLAYBACK_END_TIME - PLAYBACK_SESSION_START_TIME))
@@ -820,6 +1096,7 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
     if [[ "$line" == *"$PLAYER_DESTROY_PATTERN"* ]] && [[ "$line" != *"$PLAYBACK_END_PATTERN"* ]] && [ "$PLAYER_ACTIVE" = true ]; then
         # Show the log line first, then the footer
         display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
+        flush_pending_psdk
         PLAYER_ACTIVE=false
         PLAYER_END_TIME=$(date +%s)
         PLAYER_DURATION=$((PLAYER_END_TIME - PLAYER_SESSION_START_TIME))

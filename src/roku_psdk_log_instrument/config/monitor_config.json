@@ -57,6 +57,24 @@
     "show_playback_headers": true,
     "show_content_metadata": true,
     "show_validation_results": true
+  },
+  "event_fields": {
+    "enabled": true,
+    "description": "Configure which fields to extract and display per event name. Use 'default' for fallback.",
+    "psdk_events": {
+      "default": ["playbackSessionId"],
+      "playbackInitiatedEvent": ["playbackSessionId"],
+      "playbackInfoResolutionStartEvent": ["playbackSessionId", "videoid"],
+      "playbackInfoResolutionEndEvent": ["playbackSessionId", "videoid"],
+      "playbackProgressEvent": ["playbackSessionId", "playheaddata.contentplayheadms", "playheaddata.streamplayheadms"],
+      "playbackSessionEndEvent": ["playbackSessionId"]
+    },
+    "isdk_events": {
+      "default": ["content.editId", "playback.playbackId"],
+      "beam.events.playback.initiated_3.3": ["content.editId", "playback.playbackId", "playback.trigger"],
+      "beam.events.playback.buffer_1.4": ["buffer.action", "buffer.type"],
+      "beam.events.playback.statechange_1.4": ["stateChange.action", "playhead.contentPosition", "playhead.streamPosition"]
+    }
   }
 }
 
