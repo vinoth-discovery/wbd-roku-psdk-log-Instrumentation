@@ -79,7 +79,23 @@
   "isdk_validation": {
     "enabled": true,
     "description": "ISDK validation settings triggered on PLAYER_EXIT state change",
-    "show_event_list": true
+    "show_event_list": true,
+    "field_validation": {
+      "enabled": true,
+      "description": "Validate ISDK event fields against contentMetadata/PSDK session",
+      "fields": [
+        {
+          "isdk_field": "content.editId",
+          "match_against": "contentMetadata.id",
+          "description": "ISDK content ID should match contentMetadata ID"
+        },
+        {
+          "isdk_field": "playback.playbackId",
+          "match_against": "playbackSessionId",
+          "description": "ISDK playback ID should match PSDK playback session ID"
+        }
+      ]
+    }
   }
 }
 

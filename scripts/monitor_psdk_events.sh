@@ -50,6 +50,10 @@ VALID_CONTENT_TYPES=("episode" "standalone" "clip" "trailer" "live" "follow_up" 
 ISDK_VALIDATION_ENABLED=true
 ISDK_SHOW_EVENT_LIST=true
 
+# Default event fields config
+EVENT_FIELDS_ENABLED=true
+EVENT_FIELDS_CONFIG=""
+
 # Load configuration if available
 if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     if command -v jq &> /dev/null; then
@@ -106,17 +110,26 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         # Load ISDK validation configuration
         ISDK_VALIDATION_ENABLED=$(jq -r '.isdk_validation.enabled // true' "$CONFIG_FILE" 2>/dev/null)
         ISDK_SHOW_EVENT_LIST=$(jq -r '.isdk_validation.show_event_list // true' "$CONFIG_FILE" 2>/dev/null)
+        ISDK_FIELD_VALIDATION_ENABLED=$(jq -r '.isdk_validation.field_validation.enabled // true' "$CONFIG_FILE" 2>/dev/null)
     fi
 fi
 
 # Function to get fields for a specific event name
+# $1 = event_name, $2 = event_type (psdk, isdk, mux)
 get_event_fields() {
     local event_name="$1"
-    local is_isdk="$2"
+    local event_type="${2:-psdk}"
     local config_path
     
-    if [ "$is_isdk" = true ]; then
+    # Return empty if no config file
+    if [ -z "$EVENT_FIELDS_CONFIG" ] || [ ! -f "$EVENT_FIELDS_CONFIG" ]; then
+        return
+    fi
+    
+    if [ "$event_type" = "isdk" ]; then
         config_path=".event_fields.isdk_events"
+    elif [ "$event_type" = "mux" ]; then
+        config_path=".event_fields.mux_events"
     else
         config_path=".event_fields.psdk_events"
     fi
@@ -165,10 +178,27 @@ SESSION_METADATA_TITLE=""
 # ISDK event tracking for validation
 ISDK_EVENT_LIST=""           # Comma-separated list of ISDK event names
 ISDK_EVENT_COUNT=0           # Count of ISDK events
+ISDK_CONTENT_ID=""           # content.editId from ISDK events (for validation)
+ISDK_PLAYBACK_ID=""          # playback.playbackId from ISDK events (for validation)
+
+# ISDK field validation config
+ISDK_FIELD_VALIDATION_ENABLED=true
 SESSION_METADATA_SUBTITLE=""
 SESSION_METADATA_TYPE=""
 SESSION_METADATA_PLAYBACK_TYPE=""
 SESSION_METADATA_POS=""
+
+# MUX event tracking for validation
+MUX_EVENT_LIST=""            # Comma-separated list of MUX event names
+MUX_EVENT_COUNT=0            # Count of MUX events
+
+# Warning tracking during playback
+WARNING_LIST=""              # Pipe-separated list of warning messages
+WARNING_COUNT=0              # Count of warnings captured
+
+# Error tracking during playback
+ERROR_LIST=""                # Pipe-separated list of error messages
+ERROR_COUNT=0                # Count of errors captured
 
 # Event repetition tracking
 LAST_EVENT_NAME=""
@@ -176,17 +206,23 @@ LAST_EVENT_NAME=""
 # Function to display initial header
 show_initial_header() {
     clear
-    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════${NC}"
+    # Generate dynamic width headers
+    local psdk_dashes=$(printf '%*s' $COL_WIDTH '' | tr ' ' '─')
+    local isdk_dashes=$(printf '%*s' $ISDK_COL_WIDTH '' | tr ' ' '─')
+    local mux_dashes=$(printf '%*s' $MUX_COL_WIDTH '' | tr ' ' '─')
+    local total_dashes=$(printf '%*s' $TOTAL_WIDTH '' | tr ' ' '═')
+    
+    echo -e "${CYAN}${total_dashes}${NC}"
     echo -e "${CYAN}  PSDK Event Monitor - Player Lifecycle Tracking${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}${total_dashes}${NC}"
     echo ""
     echo -e "${GREEN}📊 Monitoring: $1${NC}"
     echo -e "${GREEN}🔍 Tracking: Player creation & destruction${NC}"
     echo -e "${GREEN}⚙️  Config: $(basename "$CONFIG_FILE")${NC}"
     echo ""
-    echo -e "${CYAN}──────────────────────────────────────────────────────────${MAGENTA}┬${CYAN}───────────────────────────────────────────────────${NC}"
-    printf "${CYAN}%-58s${MAGENTA}│${NC} %-50s\n" "  PSDK Events" "  ISDK Events"
-    echo -e "${CYAN}──────────────────────────────────────────────────────────${MAGENTA}┼${CYAN}───────────────────────────────────────────────────${NC}"
+    echo -e "${CYAN}${psdk_dashes}${MAGENTA}┬${CYAN}${isdk_dashes}${MAGENTA}┬${CYAN}${mux_dashes}${NC}"
+    printf "${CYAN}  %-$((COL_WIDTH-2))s${MAGENTA}│${CYAN}  %-$((ISDK_COL_WIDTH-2))s${MAGENTA}│${CYAN}  %-$((MUX_COL_WIDTH-2))s${NC}\n" "PSDK Events" "ISDK Events" "MUX Events"
+    echo -e "${CYAN}${psdk_dashes}${MAGENTA}┼${CYAN}${isdk_dashes}${MAGENTA}┼${CYAN}${mux_dashes}${NC}"
     echo ""
 }
 
@@ -194,26 +230,46 @@ show_initial_header() {
 show_player_created() {
     local session_id="$1"
     local time=$(get_timestamp)
+    local box_width=$((TOTAL_WIDTH - 4))  # Account for box borders
+    local border=$(printf '%*s' $box_width '' | tr ' ' '═')
+    local mid_border=$(printf '%*s' $box_width '' | tr ' ' '═')
+    
     echo ""
-    echo -e "${MAGENTA}╔═══════════════════════════════════════════════════╗${NC}"
-    echo -e "${MAGENTA}║  🎬 PLAYER SESSION STARTED  Time: ${time}  ║${NC}"
-    echo -e "${MAGENTA}╠═══════════════════════════════════════════════════╣${NC}"
+    echo -e "${MAGENTA}╔${border}╗${NC}"
     
+    local title="  🎬 PLAYER SESSION STARTED  Time: ${time}"
+    local title_len=${#title}
+    local title_padding=$((box_width - title_len))
+    if [ $title_padding -lt 0 ]; then title_padding=0; fi
+    printf "${MAGENTA}║${NC}${title}%${title_padding}s${MAGENTA}║${NC}\n" ""
+    
+    echo -e "${MAGENTA}╠${mid_border}╣${NC}"
+    
+    local content=""
     if [ -n "$session_id" ]; then
-        echo -e "${MAGENTA}║${NC} Session: ${session_id:0:40}... ${MAGENTA}║${NC}"
+        content=" Session: ${session_id}"
     else
-        echo -e "${MAGENTA}║${NC} (Connected mid-stream - auto-created session)   ${MAGENTA}║${NC}"
+        content=" (Connected mid-stream - auto-created session)"
     fi
+    local content_len=${#content}
+    local content_padding=$((box_width - content_len))
+    if [ $content_padding -lt 0 ]; then content_padding=0; fi
+    printf "${MAGENTA}║${NC}${content}%${content_padding}s${MAGENTA}║${NC}\n" ""
     
-    echo -e "${MAGENTA}╚═══════════════════════════════════════════════════╝${NC}"
+    echo -e "${MAGENTA}╚${border}╝${NC}"
     echo ""
 }
 
-# Function to display column headers for PSDK | ISDK layout (forward declaration)
+# Function to display column headers for PSDK | ISDK | MUX layout
 show_column_headers() {
-    echo -e "${CYAN}───────────────────────────────────────────────────────────────────────────────${MAGENTA}┬${CYAN}───────────────────────────────────────────────────${NC}"
-    printf "${CYAN}  %-77s${MAGENTA}│${NC} %-50s\n" "PSDK Events" "ISDK Events"
-    echo -e "${CYAN}───────────────────────────────────────────────────────────────────────────────${MAGENTA}┼${CYAN}───────────────────────────────────────────────────${NC}"
+    # Generate dynamic width headers
+    local psdk_dashes=$(printf '%*s' $COL_WIDTH '' | tr ' ' '─')
+    local isdk_dashes=$(printf '%*s' $ISDK_COL_WIDTH '' | tr ' ' '─')
+    local mux_dashes=$(printf '%*s' $MUX_COL_WIDTH '' | tr ' ' '─')
+    
+    echo -e "${CYAN}${psdk_dashes}${MAGENTA}┬${CYAN}${isdk_dashes}${MAGENTA}┬${CYAN}${mux_dashes}${NC}"
+    printf "${CYAN}  %-$((COL_WIDTH-2))s${MAGENTA}│${CYAN}  %-$((ISDK_COL_WIDTH-2))s${MAGENTA}│${CYAN}  %-$((MUX_COL_WIDTH-2))s${NC}\n" "PSDK Events" "ISDK Events" "MUX Events"
+    echo -e "${CYAN}${psdk_dashes}${MAGENTA}┼${CYAN}${isdk_dashes}${MAGENTA}┼${CYAN}${mux_dashes}${NC}"
 }
 
 # Function to display playback session started
@@ -274,44 +330,71 @@ show_playback_started() {
     show_column_headers
 }
 
-# Function to display playback session ended (proper completion)
+# Function to display playback session ended (proper completion) - UNIFIED PLAYBACK SUMMARY
 show_playback_ended() {
     local session_id="$1"
     local session_num="$2"
     local event_count="$3"
     local duration="$4"
     
-    # Helper function for footer rows (67 char box width)
-    format_row() {
-        local content="$1"
-        local color="$2"
-        # Print content and pad to fixed width, accounting for emoji width issues
-        echo -e "  ${color}│${NC} ${content}"
-    }
+    # Get terminal width for dynamic sizing (default to 160 if not available)
+    local term_width=$(tput cols 2>/dev/null || echo 160)
+    local box_width=$((term_width - 6))  # Account for margins and borders
+    if [ $box_width -lt 80 ]; then box_width=80; fi
+    if [ $box_width -gt 200 ]; then box_width=200; fi
+    local border_width=$((box_width + 2))
     
-    # Box line helper
+    # Box line helper with color support (dynamic width)
     box_line() {
         local content="$1"
-        local color="$2"
-        local width=67
-        local padding=$((width - ${#content}))
+        local border_color="$2"
+        local text_color="${3:-$NC}"
+        local content_len=${#content}
+        local padding=$((box_width - content_len))
         if [ $padding -lt 0 ]; then padding=0; fi
         local spaces=$(printf '%*s' $padding '')
-        echo -e "  ${color}│${NC} ${content}${spaces}${color}│${NC}"
+        echo -e "  ${border_color}│${NC} ${text_color}${content}${NC}${spaces}${border_color}│${NC}"
     }
     
-    echo ""
-    echo -e "${GREEN}  ┌───────────────────────────────────────────────────────────────────┐${NC}"
-    box_line "PLAYBACK SESSION #${session_num} ENDED" "${GREEN}"
-    echo -e "${GREEN}  ├───────────────────────────────────────────────────────────────────┤${NC}"
-    box_line "Session: ${session_id}" "${GREEN}"
-    box_line "Duration: ${duration}s | Events: ${event_count}" "${GREEN}"
+    # Box line for long content (no right border, for full-width display)
+    box_line_nowrap() {
+        local content="$1"
+        local border_color="$2"
+        local text_color="${3:-$NC}"
+        echo -e "  ${border_color}│${NC} ${text_color}${content}${NC}"
+    }
     
-    # Display validation results if enabled
+    # Section header helper (dynamic width)
+    section_header() {
+        local title="$1"
+        local border_color="$2"
+        local title_color="${3:-$CYAN}"
+        local title_len=${#title}
+        local padding=$((box_width - title_len - 2))
+        if [ $padding -lt 0 ]; then padding=0; fi
+        local spaces=$(printf '%*s' $padding '')
+        echo -e "  ${border_color}├$( printf '─%.0s' $(seq 1 $border_width) )┤${NC}"
+        echo -e "  ${border_color}│${NC} ${title_color}${title}${NC}${spaces}${border_color}│${NC}"
+    }
+    
+    # Draw top border
+    echo ""
+    echo -e "${CYAN}  ╔$( printf '═%.0s' $(seq 1 $border_width) )╗${NC}"
+    local title_padding=$((box_width - 18))  # 18 = length of "📊 PLAYBACK SUMMARY"
+    if [ $title_padding -lt 0 ]; then title_padding=0; fi
+    echo -e "${CYAN}  ║${NC}  📊 ${CYAN}PLAYBACK SUMMARY${NC}$(printf '%*s' $title_padding '')${CYAN}║${NC}"
+    echo -e "${CYAN}  ╠$( printf '═%.0s' $(seq 1 $border_width) )╣${NC}"
+    
+    # Session Info Section
+    box_line "Session #${session_num}" "${CYAN}" "${YELLOW}"
+    box_line "  ID: ${session_id}" "${CYAN}" "${GREY}"
+    box_line "  Duration: ${duration}s  |  PSDK Events: ${event_count}  |  ISDK Events: ${ISDK_EVENT_COUNT}" "${CYAN}"
+    
+    # Content Metadata Validation Section
     if [ "$SHOW_VALIDATION_RESULTS" = "true" ] && [ "$VALIDATION_ENABLED" = "true" ]; then
-        echo -e "${GREEN}  ├───────────────────────────────────────────────────────────────────┤${NC}"
+        section_header "📋 Content Metadata Validation" "${CYAN}" "${YELLOW}"
         
-        # Perform validation and display line by line
+        # Perform validation
         local has_errors=false
         local missing_required=()
         local missing_optional=()
@@ -359,36 +442,180 @@ show_playback_ended() {
             has_errors=true
         fi
         
-        # Display validation header
+        # Display validation status
         if [ "$has_errors" = true ]; then
-            box_line "ContentMetadata Validation: INVALID" "${GREEN}"
+            box_line "  Status: ❌ INVALID" "${CYAN}" "${RED}"
         else
             local present=$((${#REQUIRED_FIELDS[@]} + ${#OPTIONAL_FIELDS[@]} - ${#missing_optional[@]}))
             local total=$((${#REQUIRED_FIELDS[@]} + ${#OPTIONAL_FIELDS[@]}))
             if [ ${#missing_optional[@]} -eq 0 ]; then
-                box_line "ContentMetadata Validation: VALID (All fields present)" "${GREEN}"
+                box_line "  Status: ✅ VALID (All fields present)" "${CYAN}" "${GREEN}"
             else
-                box_line "ContentMetadata Validation: VALID (${present}/${total} fields)" "${GREEN}"
+                box_line "  Status: ✅ VALID (${present}/${total} fields)" "${CYAN}" "${GREEN}"
             fi
         fi
         
-        # Display line-by-line validation details
+        # Display validation details
         if [ ${#missing_required[@]} -gt 0 ]; then
-            box_line "  - Missing required: ${missing_required[*]}" "${GREEN}"
+            box_line "    ├ Missing required: ${missing_required[*]}" "${CYAN}" "${RED}"
         fi
         if [ -n "$invalid_playback_type" ]; then
-            box_line "  - Invalid playbackType: '${invalid_playback_type}'" "${GREEN}"
+            box_line "    ├ Invalid playbackType: '${invalid_playback_type}'" "${CYAN}" "${RED}"
         fi
         if [ -n "$invalid_content_type" ]; then
-            box_line "  - Invalid contentType: '${invalid_content_type}'" "${GREEN}"
+            box_line "    ├ Invalid contentType: '${invalid_content_type}'" "${CYAN}" "${RED}"
         fi
         if [ ${#missing_optional[@]} -gt 0 ]; then
-            box_line "  - Missing optional: ${missing_optional[*]}" "${GREEN}"
+            box_line "    └ Missing optional: ${missing_optional[*]}" "${CYAN}" "${YELLOW}"
         fi
     fi
     
-    echo -e "${GREEN}  └───────────────────────────────────────────────────────────────────┘${NC}"
+    # ISDK Validation Section (if enabled)
+    if [ "$ISDK_VALIDATION_ENABLED" = "true" ]; then
+        section_header "🔗 ISDK Validation" "${CYAN}" "${MAGENTA}"
+        
+        # ISDK Events List
+        if [ "$ISDK_SHOW_EVENT_LIST" = "true" ]; then
+            if [ -n "$ISDK_EVENT_LIST" ]; then
+                # Get unique events
+                local unique_list=""
+                local IFS=','
+                for evt in $ISDK_EVENT_LIST; do
+                    if [[ ",$unique_list," != *",$evt,"* ]]; then
+                        if [ -n "$unique_list" ]; then
+                            unique_list="${unique_list},${evt}"
+                        else
+                            unique_list="$evt"
+                        fi
+                    fi
+                done
+                
+                local total_unique=$(echo "$unique_list" | tr ',' '\n' | wc -l | tr -d ' ')
+                box_line "  Events Captured: ${ISDK_EVENT_COUNT} total, ${total_unique} unique" "${CYAN}"
+                
+                # Display unique events as a tree
+                local evt_count=0
+                for evt in $unique_list; do
+                    ((evt_count++))
+                    local display_evt="${evt:0:95}"
+                    if [ $evt_count -eq $total_unique ]; then
+                        box_line "    └ ${display_evt}" "${CYAN}" "${GREY}"
+                    else
+                        box_line "    ├ ${display_evt}" "${CYAN}" "${GREY}"
+                    fi
+                done
+            else
+                box_line "  Events Captured: 0 (No ISDK events)" "${CYAN}" "${YELLOW}"
+            fi
+        fi
+        
+        # Field Validation
+        if [ "$ISDK_FIELD_VALIDATION_ENABLED" = "true" ]; then
+            box_line "" "${CYAN}"
+            box_line "  Field Cross-Validation:" "${CYAN}" "${YELLOW}"
+            
+            # Validate content.editId against contentMetadata.id
+            local content_status="⚠️  N/A"
+            local content_color="${YELLOW}"
+            if [ -n "$ISDK_CONTENT_ID" ] && [ -n "$SESSION_METADATA_ID" ]; then
+                if [ "$ISDK_CONTENT_ID" = "$SESSION_METADATA_ID" ]; then
+                    content_status="✅ MATCH"
+                    content_color="${GREEN}"
+                else
+                    content_status="❌ MISMATCH"
+                    content_color="${RED}"
+                fi
+            elif [ -z "$ISDK_CONTENT_ID" ]; then
+                content_status="⚠️  No ISDK editId"
+            elif [ -z "$SESSION_METADATA_ID" ]; then
+                content_status="⚠️  No Metadata ID"
+            fi
+            box_line "    ├ content.editId ↔ metadata.id: ${content_status}" "${CYAN}" "${content_color}"
+            if [ -n "$ISDK_CONTENT_ID" ]; then
+                box_line "      │ ISDK: ${ISDK_CONTENT_ID:0:85}" "${CYAN}" "${GREY}"
+            fi
+            if [ -n "$SESSION_METADATA_ID" ]; then
+                box_line "      │ Meta: ${SESSION_METADATA_ID:0:85}" "${CYAN}" "${GREY}"
+            fi
+            
+            # Validate playback.playbackId against playbackSessionId
+            local playback_status="⚠️  N/A"
+            local playback_color="${YELLOW}"
+            if [ -n "$ISDK_PLAYBACK_ID" ] && [ -n "$PLAYBACK_SESSION_ID" ]; then
+                if [ "$ISDK_PLAYBACK_ID" = "$PLAYBACK_SESSION_ID" ]; then
+                    playback_status="✅ MATCH"
+                    playback_color="${GREEN}"
+                else
+                    playback_status="❌ MISMATCH"
+                    playback_color="${RED}"
+                fi
+            elif [ -z "$ISDK_PLAYBACK_ID" ]; then
+                playback_status="⚠️  No ISDK playbackId"
+            elif [ -z "$PLAYBACK_SESSION_ID" ]; then
+                playback_status="⚠️  No PSDK playbackId"
+            fi
+            box_line "    └ playback.playbackId ↔ sessionId: ${playback_status}" "${CYAN}" "${playback_color}"
+            if [ -n "$ISDK_PLAYBACK_ID" ]; then
+                box_line "        ISDK: ${ISDK_PLAYBACK_ID:0:85}" "${CYAN}" "${GREY}"
+            fi
+            if [ -n "$PLAYBACK_SESSION_ID" ]; then
+                box_line "        PSDK: ${PLAYBACK_SESSION_ID:0:85}" "${CYAN}" "${GREY}"
+            fi
+        fi
+    fi
+    
+    # Errors Section
+    section_header "❌ Errors Captured" "${CYAN}" "${RED}"
+    if [ "$ERROR_COUNT" -gt 0 ]; then
+        box_line "  Total Errors: ${ERROR_COUNT}" "${CYAN}" "${RED}"
+        box_line "" "${CYAN}"
+        
+        # Display all errors (pipe-separated list) - full line, no truncation
+        local err_idx=0
+        local IFS='|'
+        for error in $ERROR_LIST; do
+            ((err_idx++))
+            # Show full error without truncation
+            if [ $err_idx -eq $ERROR_COUNT ]; then
+                box_line_nowrap "    └ ${error}" "${CYAN}" "${RED}"
+            else
+                box_line_nowrap "    ├ ${error}" "${CYAN}" "${RED}"
+            fi
+        done
+    else
+        box_line "  No errors captured during this session ✅" "${CYAN}" "${GREEN}"
+    fi
+    
+    # Warnings Section
+    section_header "⚠️  Warnings Captured" "${CYAN}" "${YELLOW}"
+    if [ "$WARNING_COUNT" -gt 0 ]; then
+        box_line "  Total Warnings: ${WARNING_COUNT}" "${CYAN}" "${YELLOW}"
+        box_line "" "${CYAN}"
+        
+        # Display all warnings (pipe-separated list) - full line, no truncation
+        local warn_idx=0
+        local IFS='|'
+        for warning in $WARNING_LIST; do
+            ((warn_idx++))
+            # Show full warning without truncation
+            if [ $warn_idx -eq $WARNING_COUNT ]; then
+                box_line_nowrap "    └ ${warning}" "${CYAN}" "${YELLOW}"
+            else
+                box_line_nowrap "    ├ ${warning}" "${CYAN}" "${YELLOW}"
+            fi
+        done
+    else
+        box_line "  No warnings captured during this session ✅" "${CYAN}" "${GREEN}"
+    fi
+    
+    echo -e "${CYAN}  ╚$( printf '═%.0s' $(seq 1 $border_width) )╝${NC}"
     echo ""
+    
+    # Reset tracking after displaying summary
+    reset_isdk_tracking
+    reset_mux_tracking
+    reset_warning_tracking
+    reset_error_tracking
 }
 
 # Function to display playback session force-closed (when new playback starts without proper end)
@@ -419,69 +646,54 @@ show_playback_aborted() {
     echo ""
 }
 
-# Function to display ISDK validation summary on PLAYER_EXIT (in right column)
-show_isdk_validation() {
-    # Check if ISDK validation is enabled
-    if [ "$ISDK_VALIDATION_ENABLED" != "true" ]; then
-        return
-    fi
-    
-    # Right column line helper (displays in ISDK column)
-    isdk_line() {
-        local content="$1"
-        printf "%-${COL_WIDTH}s ${MAGENTA}│${NC} ${MAGENTA}${content}${NC}\n" ""
-    }
-    
-    echo ""
-    isdk_line "┌─────────────────────────────────────────────────┐"
-    isdk_line "│ ISDK VALIDATION SUMMARY                         │"
-    isdk_line "├─────────────────────────────────────────────────┤"
-    
-    # List of unique ISDK events seen (if enabled)
-    if [ "$ISDK_SHOW_EVENT_LIST" = "true" ]; then
-        isdk_line "│ Events Captured: ${ISDK_EVENT_COUNT}                              │"
-        isdk_line "├─────────────────────────────────────────────────┤"
-        
-        if [ -n "$ISDK_EVENT_LIST" ]; then
-            # Get unique events from comma-separated list
-            local unique_list=""
-            local IFS=','
-            for evt in $ISDK_EVENT_LIST; do
-                # Check if evt is already in unique_list
-                if [[ ",$unique_list," != *",$evt,"* ]]; then
-                    if [ -n "$unique_list" ]; then
-                        unique_list="${unique_list},${evt}"
-                    else
-                        unique_list="$evt"
-                    fi
-                fi
-            done
-            
-            # Count and display unique events
-            local evt_count=0
-            local total_unique=$(echo "$unique_list" | tr ',' '\n' | wc -l | tr -d ' ')
-            for evt in $unique_list; do
-                ((evt_count++))
-                # Truncate event name if too long
-                local display_evt="${evt:0:45}"
-                if [ $evt_count -eq $total_unique ]; then
-                    printf "%-${COL_WIDTH}s ${MAGENTA}│${NC} ${MAGENTA}│${NC}   └ ${CYAN}${display_evt}${NC}\n" ""
-                else
-                    printf "%-${COL_WIDTH}s ${MAGENTA}│${NC} ${MAGENTA}│${NC}   ├ ${CYAN}${display_evt}${NC}\n" ""
-                fi
-            done
-        else
-            isdk_line "│   (No ISDK events captured)                    │"
-        fi
-    fi
-    
-    isdk_line "└─────────────────────────────────────────────────┘"
-}
-
 # Function to reset ISDK tracking for new playback
 reset_isdk_tracking() {
     ISDK_EVENT_LIST=""
     ISDK_EVENT_COUNT=0
+    ISDK_CONTENT_ID=""
+    ISDK_PLAYBACK_ID=""
+}
+
+# Function to reset MUX tracking for new playback
+reset_mux_tracking() {
+    MUX_EVENT_LIST=""
+    MUX_EVENT_COUNT=0
+}
+
+# Function to reset warning tracking for new playback
+reset_warning_tracking() {
+    WARNING_LIST=""
+    WARNING_COUNT=0
+}
+
+# Function to reset error tracking for new playback
+reset_error_tracking() {
+    ERROR_LIST=""
+    ERROR_COUNT=0
+}
+
+# Function to capture a warning during playback
+capture_warning() {
+    local warning_msg="$1"
+    ((WARNING_COUNT++))
+    # Store full warning message (no truncation)
+    if [ -n "$WARNING_LIST" ]; then
+        WARNING_LIST="${WARNING_LIST}|${warning_msg}"
+    else
+        WARNING_LIST="$warning_msg"
+    fi
+}
+
+# Function to capture an error during playback
+capture_error() {
+    local error_msg="$1"
+    ((ERROR_COUNT++))
+    # Store full error message (no truncation)
+    if [ -n "$ERROR_LIST" ]; then
+        ERROR_LIST="${ERROR_LIST}|${error_msg}"
+    else
+        ERROR_LIST="$error_msg"
+    fi
 }
 
 # Function to validate content metadata and return validation result
@@ -764,8 +976,11 @@ extract_event_name() {
     echo "$line"
 }
 
-# Fixed column widths for two-column display
-COL_WIDTH=75
+# Fixed column widths for three-column display (PSDK | ISDK | MUX)
+COL_WIDTH=75          # PSDK column width
+ISDK_COL_WIDTH=75     # ISDK column width  
+MUX_COL_WIDTH=70      # MUX column width (wider for field display)
+TOTAL_WIDTH=$((COL_WIDTH + ISDK_COL_WIDTH + MUX_COL_WIDTH + 2))  # Total width including separators
 
 # Function to extract a field value from JSON in a log line
 # Supports nested fields like "content.editId" or "playback.trigger"
@@ -814,9 +1029,10 @@ extract_json_field() {
 }
 
 # Function to display event fields
+# $1 = line, $2 = event_type (psdk, isdk, mux), $3 = event_name
 display_event_fields() {
     local line="$1"
-    local is_isdk="$2"
+    local event_type="${2:-psdk}"
     local event_name="$3"
     
     if [ "$EVENT_FIELDS_ENABLED" != "true" ]; then
@@ -827,7 +1043,7 @@ display_event_fields() {
     local fields_array=()
     while IFS= read -r field; do
         [ -n "$field" ] && fields_array+=("$field")
-    done < <(get_event_fields "$event_name" "$is_isdk")
+    done < <(get_event_fields "$event_name" "$event_type")
     
     if [ ${#fields_array[@]} -eq 0 ]; then
         return
@@ -840,7 +1056,14 @@ display_event_fields() {
     # First pass: count how many fields have values
     local fields_with_values=()
     for field in "${fields_array[@]}"; do
-        local value=$(extract_json_field "$line" "$field")
+        local value=""
+        if [ "$event_type" = "mux" ]; then
+            # MUX payload format: field:value, separated by comma/space
+            # e.g., view_session_id:abc123, viewer_time:12345
+            value=$(extract_mux_field "$line" "$field")
+        else
+            value=$(extract_json_field "$line" "$field")
+        fi
         if [ -n "$value" ]; then
             fields_with_values+=("$field:$value")
         fi
@@ -859,22 +1082,56 @@ display_event_fields() {
             tree_char="└"
         fi
         
-        if [ "$is_isdk" = true ]; then
-            # Right column field
-            printf "%-${COL_WIDTH}s ${MAGENTA}│${NC}     ${GREY}${tree_char} ${field}: ${value}${NC}\n" ""
-        else
-            # Left column field - calculate padding to align separator
-            local field_line="     ${tree_char} ${field}: ${value}"
-            local field_len=${#field_line}
-            local padding=$((COL_WIDTH - field_len))
+        if [ "$event_type" = "isdk" ]; then
+            # ISDK field - middle column (Empty PSDK | ISDK field | Empty MUX)
+            local field_display="   ${tree_char} ${field}: ${value}"
+            local field_len=${#field_display}
+            local padding=$((ISDK_COL_WIDTH - field_len - 1))
             if [ $padding -lt 0 ]; then padding=0; fi
-            printf "     ${GREY}${tree_char} ${field}: ${value}${NC}%${padding}s ${MAGENTA}│${NC}\n" ""
+            printf "%-${COL_WIDTH}s${MAGENTA}│${NC}${GREY}${field_display}${NC}%${padding}s${MAGENTA}│${NC}%-${MUX_COL_WIDTH}s\n" "" "" ""
+        elif [ "$event_type" = "mux" ]; then
+            # MUX field - right column (Empty PSDK | Empty ISDK | MUX field)
+            local field_display="   ${tree_char} ${field}: ${value}"
+            printf "%-${COL_WIDTH}s${MAGENTA}│${NC}%-${ISDK_COL_WIDTH}s${MAGENTA}│${NC}${GREY}${field_display}${NC}\n" "" ""
+        else
+            # PSDK field - left column (PSDK field | Empty ISDK | Empty MUX)
+            local field_line="   ${tree_char} ${field}: ${value}"
+            local field_len=${#field_line}
+            local padding=$((COL_WIDTH - field_len - 1))
+            if [ $padding -lt 0 ]; then padding=0; fi
+            printf "${GREY}${field_line}${NC}%${padding}s${MAGENTA}│${NC}%-${ISDK_COL_WIDTH}s${MAGENTA}│${NC}%-${MUX_COL_WIDTH}s\n" "" "" ""
         fi
     done
 }
 
+# Function to extract field value from MUX event payload
+# MUX format: [mux-analytics] EVENT eventname{field:value, field2:value2, ...}
+extract_mux_field() {
+    local line="$1"
+    local field_name="$2"
+    local value=""
+    
+    # Extract the payload portion after eventname{ (handle truncated lines without closing })
+    local payload=""
+    if [[ "$line" == *"{"* ]]; then
+        payload="${line#*\{}"
+        payload="${payload%\}*}"
+    fi
+    
+    if [ -n "$payload" ]; then
+        # Use sed to extract field value (bash 3.2 compatible)
+        # Pattern: field_name:value where value ends at comma or end of string
+        value=$(echo "$payload" | sed -n "s/.*${field_name}:\([^,]*\).*/\1/p" | head -1)
+        # Trim whitespace
+        value="${value## }"
+        value="${value%% }"
+    fi
+    
+    echo "$value"
+}
+
 # Function to display log line with timestamp (showing only event name)
-# Two-column layout: PSDK events left, ISDK events right
+# Two-column layout: PSDK events left, ISDK events right, MUX events right (magenta)
 display_log_with_timestamp() {
     local line="$1"
     local session_num="${2:-0}"  # Optional session number, defaults to 0
@@ -885,6 +1142,12 @@ display_log_with_timestamp() {
     local is_isdk=false
     if [[ "$line" == *"[PSDK::ISDK]"* ]]; then
         is_isdk=true
+    fi
+    
+    # Check if this is a MUX event
+    local is_mux=false
+    if [[ "$line" == *"[mux-analytics]"* ]] || [[ "$line" == *"mux:"* ]] || [[ "$line" == *"MUX:"* ]]; then
+        is_mux=true
     fi
     
     # Check if this event is a repeat of the last one
@@ -898,7 +1161,7 @@ display_log_with_timestamp() {
     
     # Format the event display
     local session_prefix=""
-    if [ "$session_num" -gt 0 ]; then
+        if [ "$session_num" -gt 0 ]; then
         session_prefix="[S${session_num}] "
     fi
     
@@ -911,27 +1174,84 @@ display_log_with_timestamp() {
         raw_event_name="${event_name#\[ISDK\] }"
     fi
     
-    # Two-column display
-    if [ "$is_isdk" = true ]; then
-        # ISDK event - show in RIGHT column
+    # Three-column display: PSDK left | ISDK middle | MUX right
+    if [ "$is_mux" = true ]; then
+        # MUX event - show in RIGHT (3rd) column
         if [ "$is_repeat" != true ]; then
             echo ""
         fi
-        # Empty left column, separator, then ISDK event
-        printf "%-${COL_WIDTH}s ${MAGENTA}│${NC} ${CYAN}[%s]${NC} ${YELLOW}%s${NC}\n" "" "$timestamp" "$display_str"
+        
+        # Extract MUX event name for field config lookup (using sed for bash 3.2 compatibility)
+        local mux_event_name=""
+        mux_event_name=$(echo "$line" | sed -n 's/.*\[mux-analytics\] EVENT \([a-zA-Z_]*\).*/\1/p')
+        if [ -z "$mux_event_name" ]; then
+            mux_event_name=$(echo "$line" | sed -n 's/.*\[mux-analytics\] \([a-zA-Z_]*\).*/\1/p')
+        fi
+        
+        # Empty PSDK column | Empty ISDK column | MUX event
+        printf "%-${COL_WIDTH}s${MAGENTA}│${NC}%-${ISDK_COL_WIDTH}s${MAGENTA}│${NC} ${CYAN}[%s]${NC} ${GREEN}%s${NC}\n" "" "" "$timestamp" "$display_str"
+        # Display configured fields for MUX event (only for non-repeated events)
+        if [ "$is_repeat" != true ] && [ -n "$mux_event_name" ]; then
+            display_event_fields "$line" "mux" "$mux_event_name"
+        fi
+    elif [ "$is_isdk" = true ]; then
+        # ISDK event - show in MIDDLE (2nd) column
+        if [ "$is_repeat" != true ]; then
+            echo ""
+        fi
+        # Empty PSDK column | ISDK event | Empty MUX column
+        printf "%-${COL_WIDTH}s${MAGENTA}│${NC} ${CYAN}[%s]${NC} ${YELLOW}%-$((ISDK_COL_WIDTH-18))s${NC}${MAGENTA}│${NC}%-${MUX_COL_WIDTH}s\n" "" "$timestamp" "$display_str" ""
         # Display configured fields for this event
-        display_event_fields "$line" true "$raw_event_name"
+        display_event_fields "$line" "isdk" "$raw_event_name"
     else
-        # PSDK event - show in LEFT column
+        # PSDK event - show in LEFT (1st) column
         if [ "$is_repeat" = true ]; then
             # Grey for repeated events
-            printf "${CYAN}[%s]${NC} ${GREY}%-$((COL_WIDTH-15))s${NC} ${MAGENTA}│${NC}\n" "$timestamp" "$display_str"
+            printf "${CYAN}[%s]${NC} ${GREY}%-$((COL_WIDTH-16))s${NC}${MAGENTA}│${NC}%-${ISDK_COL_WIDTH}s${MAGENTA}│${NC}%-${MUX_COL_WIDTH}s\n" "$timestamp" "$display_str" "" ""
         else
             echo ""
-            printf "${CYAN}[%s]${NC} ${YELLOW}%-$((COL_WIDTH-15))s${NC} ${MAGENTA}│${NC}\n" "$timestamp" "$display_str"
+            printf "${CYAN}[%s]${NC} ${YELLOW}%-$((COL_WIDTH-16))s${NC}${MAGENTA}│${NC}%-${ISDK_COL_WIDTH}s${MAGENTA}│${NC}%-${MUX_COL_WIDTH}s\n" "$timestamp" "$display_str" "" ""
             # Display configured fields for this event (only for non-repeated events)
-            display_event_fields "$line" false "$raw_event_name"
+            display_event_fields "$line" "psdk" "$raw_event_name"
         fi
+    fi
+}
+
+# Function to display MUX event with timestamp
+display_mux_event() {
+    local line="$1"
+    local session_num="${2:-0}"
+    local timestamp=$(get_timestamp)
+    
+    # Extract MUX event name using sed (bash 3.2 compatible)
+    # Format: [mux-analytics] EVENT eventname{...} or [mux-analytics] EVENT eventname ...
+    local mux_event=""
+    
+    # Try to extract EVENT name (e.g., "EVENT viewstart{" -> "viewstart")
+    mux_event=$(echo "$line" | sed -n 's/.*\[mux-analytics\] EVENT \([a-zA-Z_]*\).*/\1/p')
+    
+    # Fallback: extract first word after [mux-analytics] (e.g., "[mux-analytics] running" -> "running")
+    if [ -z "$mux_event" ]; then
+        mux_event=$(echo "$line" | sed -n 's/.*\[mux-analytics\] \([a-zA-Z_]*\).*/\1/p')
+    fi
+    
+    # Default fallback
+    if [ -z "$mux_event" ]; then
+        mux_event="mux_event"
+    fi
+    
+    local session_prefix=""
+    if [ "$session_num" -gt 0 ]; then
+        session_prefix="[S${session_num}] "
+    fi
+    
+    echo ""
+    # Display in MUX column (3rd column)
+    printf "%-${COL_WIDTH}s${MAGENTA}│${NC}%-${ISDK_COL_WIDTH}s${MAGENTA}│${NC} ${CYAN}[%s]${NC} ${GREEN}${session_prefix}${mux_event}${NC}\n" "" "" "$timestamp"
+    
+    # Display configured fields for MUX event (always try if we have a valid event name)
+    if [ -n "$mux_event" ]; then
+        display_event_fields "$line" "mux" "$mux_event"
     fi
 }
 
@@ -1125,6 +1445,9 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         PLAYBACK_SESSION_ID=$(extract_session_id "$line")
         LAST_EVENT_NAME=""  # Reset event repetition tracking for new playback session
         reset_isdk_tracking  # Reset ISDK tracking for new playback
+        reset_mux_tracking   # Reset MUX tracking for new playback
+        reset_warning_tracking  # Reset warning tracking for new playback
+        reset_error_tracking  # Reset error tracking for new playback
         
         # Try to extract playbackType from the event line if not already set
         if [ -z "$CONTENT_PLAYBACK_TYPE" ]; then
@@ -1208,6 +1531,11 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         matches_pattern=true
     fi
     
+    # Check for MUX analytics events
+    if [[ "$line" == *"[mux-analytics]"* ]] || [[ "$line" == *"mux:"* ]] || [[ "$line" == *"MUX:"* ]]; then
+        matches_pattern=true
+    fi
+    
     # Check for custom patterns if provided
     if [ ${#CUSTOM_PATTERNS[@]} -gt 0 ]; then
         for pattern in "${CUSTOM_PATTERNS[@]}"; do
@@ -1234,10 +1562,10 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         
         # Increment event counters only for PSDK events
         if [[ "$line" == *"PSDK::"* ]]; then
-            ((PLAYER_EVENT_COUNT++))
-            if [ "$PLAYBACK_ACTIVE" = true ]; then
-                ((PLAYBACK_EVENT_COUNT++))
-            fi
+        ((PLAYER_EVENT_COUNT++))
+        if [ "$PLAYBACK_ACTIVE" = true ]; then
+            ((PLAYBACK_EVENT_COUNT++))
+        fi
         fi
         
         # Display custom pattern matches
@@ -1252,10 +1580,10 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
         
         # Display PSDK events (separate from custom - a line can match both)
         if [[ "$line" == *"PSDK::"* ]] && [ "$is_custom_pattern" = false ]; then
-            if [ "$PLAYBACK_ACTIVE" = true ]; then
-                display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
-            else
-                display_log_with_timestamp "$line" 0
+        if [ "$PLAYBACK_ACTIVE" = true ]; then
+            display_log_with_timestamp "$line" "$PLAYBACK_SESSION_NUMBER"
+        else
+            display_log_with_timestamp "$line" 0
             fi
         fi
         
@@ -1275,13 +1603,119 @@ tail -f "$LOG_FILE" | while IFS= read -r line; do
                     ISDK_EVENT_LIST="$isdk_event_name"
                 fi
                 
-                # Check for PLAYER_EXIT state change - trigger ISDK validation
-                if [[ "$isdk_event_name" == *"statechange"* ]]; then
-                    state_action=$(extract_json_field "$line" "stateChange.action")
-                    if [ "$state_action" = "PLAYER_EXIT" ]; then
-                        show_isdk_validation
-                        reset_isdk_tracking
-                    fi
+                # Extract fields for validation (capture first occurrence)
+                if [ -z "$ISDK_CONTENT_ID" ]; then
+                    extracted_id=$(extract_json_field "$line" "content.editId")
+                    [ -n "$extracted_id" ] && ISDK_CONTENT_ID="$extracted_id"
+                fi
+                if [ -z "$ISDK_PLAYBACK_ID" ]; then
+                    extracted_pid=$(extract_json_field "$line" "playback.playbackId")
+                    [ -n "$extracted_pid" ] && ISDK_PLAYBACK_ID="$extracted_pid"
+                fi
+                
+                # Note: ISDK validation is now displayed as part of the unified Playback Summary
+                # when playbackSessionEndEvent occurs (see show_playback_ended function)
+            fi
+        fi
+        
+        # Track MUX analytics events
+        if [[ "$line" == *"[mux-analytics]"* ]] || [[ "$line" == *"mux:"* ]] || [[ "$line" == *"MUX:"* ]]; then
+            ((MUX_EVENT_COUNT++))
+            
+            # Extract MUX event name using sed (bash 3.2 compatible)
+            # Format: [mux-analytics] EVENT eventname{...} or [mux-analytics] EVENT eventname ...
+            mux_event_name=""
+            mux_event_name=$(echo "$line" | sed -n 's/.*\[mux-analytics\] EVENT \([a-zA-Z_]*\).*/\1/p')
+            if [ -z "$mux_event_name" ]; then
+                mux_event_name=$(echo "$line" | sed -n 's/.*\[mux-analytics\] \([a-zA-Z_]*\).*/\1/p')
+            fi
+            if [ -z "$mux_event_name" ]; then
+                mux_event_name=$(echo "$line" | sed -n 's/.*mux: *\([a-zA-Z_]*\).*/\1/p')
+            fi
+            if [ -z "$mux_event_name" ]; then
+                mux_event_name=$(echo "$line" | sed -n 's/.*MUX: *\([a-zA-Z_]*\).*/\1/p')
+            fi
+            if [ -z "$mux_event_name" ]; then
+                mux_event_name="mux_event"
+            fi
+            
+            # Append to comma-separated list
+            if [ -n "$mux_event_name" ]; then
+                if [ -n "$MUX_EVENT_LIST" ]; then
+                    MUX_EVENT_LIST="${MUX_EVENT_LIST},${mux_event_name}"
+                else
+                    MUX_EVENT_LIST="$mux_event_name"
+                fi
+            fi
+            
+            # Display MUX event in real-time
+            display_mux_event "$line" "$PLAYBACK_SESSION_NUMBER"
+        fi
+    fi
+    
+    # Capture warnings and errors during active playback session
+    # Only capture actual log lines, not JSON payloads or data
+    if [ "$PLAYBACK_ACTIVE" = true ]; then
+        # Skip JSON payloads and data lines (they contain errors/warnings as field names, not actual errors)
+        # Skip if line starts with { or contains typical JSON patterns like "events": or "http
+        is_json_data=false
+        if [[ "$line" =~ ^[[:space:]]*\{ ]] || [[ "$line" =~ \"events\": ]] || [[ "$line" =~ \"http ]]; then
+            is_json_data=true
+        fi
+        
+        if [ "$is_json_data" = false ]; then
+            # Check for error patterns - must be at start of line or after timestamp/log prefix
+            # Patterns: "ERROR:", "Error:", "FATAL:", "[ERROR]", "BRIGHTSCRIPT: ERROR:", "❌"
+            if [[ "$line" =~ ^[[:space:]]*(ERROR|Error|FATAL|fatal):[[:space:]]* ]] || \
+               [[ "$line" =~ \[(ERROR|Error|FATAL)\] ]] || \
+               [[ "$line" =~ [0-9]{2}:[0-9]{2}:[0-9]{2}.*ERROR: ]] || \
+               [[ "$line" == *"BRIGHTSCRIPT: ERROR:"* ]] || \
+               [[ "$line" == *"❌"* ]]; then
+                # Extract a meaningful error message
+                error_msg=""
+                
+                # Try to extract error from common formats
+                if [[ "$line" =~ BRIGHTSCRIPT:[[:space:]]*ERROR:[[:space:]]*(.+) ]]; then
+                    error_msg="[BrightScript] ${BASH_REMATCH[1]}"
+                elif [[ "$line" =~ (ERROR|Error|FATAL):[[:space:]]*(.+) ]]; then
+                    error_msg="${BASH_REMATCH[2]}"
+                elif [[ "$line" =~ \[(ERROR|Error|FATAL)\][[:space:]]*(.+) ]]; then
+                    error_msg="${BASH_REMATCH[2]}"
+                else
+                    error_msg="$line"
+                fi
+                
+                # Capture the error (skip if it looks like JSON)
+                if [[ ! "$error_msg" =~ ^\{ ]]; then
+                    capture_error "$error_msg"
+                fi
+            # Check for warning patterns - must be at start of line or after timestamp/log prefix
+            # Patterns: "WARN:", "WARNING:", "Warning:", "[WARN]", "Warning occurred", "Type mismatch", "⚠️"
+            elif [[ "$line" =~ ^[[:space:]]*(WARN|WARNING|Warning|warn|warning):[[:space:]]* ]] || \
+                 [[ "$line" =~ \[(WARN|WARNING|Warning)\] ]] || \
+                 [[ "$line" =~ [0-9]{2}:[0-9]{2}:[0-9]{2}.*(WARN|WARNING): ]] || \
+                 [[ "$line" == *"Warning occurred"* ]] || \
+                 [[ "$line" == *"Type mismatch occurred"* ]] || \
+                 [[ "$line" == *"⚠️"* ]]; then
+                # Extract a meaningful warning message
+                warning_msg=""
+                
+                # Try to extract warning from common formats
+                if [[ "$line" =~ Warning[[:space:]]occurred[[:space:]](.+) ]]; then
+                    warning_msg="[Roku] ${BASH_REMATCH[1]}"
+                elif [[ "$line" =~ Type[[:space:]]mismatch[[:space:]]occurred[[:space:]](.+) ]]; then
+                    warning_msg="[Roku] Type mismatch: ${BASH_REMATCH[1]}"
+                elif [[ "$line" =~ (WARN|WARNING|Warning|warning):[[:space:]]*(.+) ]]; then
+                    warning_msg="${BASH_REMATCH[2]}"
+                elif [[ "$line" =~ \[(WARN|WARNING|Warning)\][[:space:]]*(.+) ]]; then
+                    warning_msg="${BASH_REMATCH[2]}"
+                else
+                    warning_msg="$line"
+                fi
+                
+                # Capture the warning (skip if it looks like JSON or separator lines)
+                if [[ ! "$warning_msg" =~ ^\{ ]] && [[ ! "$warning_msg" =~ ^=+$ ]]; then
+                    capture_warning "$warning_msg"
                 fi
             fi
         fi
