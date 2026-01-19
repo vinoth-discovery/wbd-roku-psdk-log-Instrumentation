@@ -344,24 +344,32 @@ show_playback_ended() {
     if [ $box_width -gt 200 ]; then box_width=200; fi
     local border_width=$((box_width + 2))
     
+    # Generate border strings once for consistent width
+    local top_border=$(printf '═%.0s' $(seq 1 $box_width))
+    local mid_border=$(printf '─%.0s' $(seq 1 $box_width))
+    
     # Box line helper with color support (dynamic width)
     box_line() {
         local content="$1"
         local border_color="$2"
         local text_color="${3:-$NC}"
         local content_len=${#content}
-        local padding=$((box_width - content_len))
+        local padding=$((box_width - content_len - 1))
         if [ $padding -lt 0 ]; then padding=0; fi
         local spaces=$(printf '%*s' $padding '')
         echo -e "  ${border_color}│${NC} ${text_color}${content}${NC}${spaces}${border_color}│${NC}"
     }
     
-    # Box line for long content (no right border, for full-width display)
+    # Box line for long content (with right border aligned)
     box_line_nowrap() {
         local content="$1"
         local border_color="$2"
         local text_color="${3:-$NC}"
-        echo -e "  ${border_color}│${NC} ${text_color}${content}${NC}"
+        local content_len=${#content}
+        local padding=$((box_width - content_len - 1))
+        if [ $padding -lt 0 ]; then padding=0; fi
+        local spaces=$(printf '%*s' $padding '')
+        echo -e "  ${border_color}│${NC} ${text_color}${content}${NC}${spaces}${border_color}│${NC}"
     }
     
     # Section header helper (dynamic width)
@@ -373,17 +381,17 @@ show_playback_ended() {
         local padding=$((box_width - title_len - 2))
         if [ $padding -lt 0 ]; then padding=0; fi
         local spaces=$(printf '%*s' $padding '')
-        echo -e "  ${border_color}├$( printf '─%.0s' $(seq 1 $border_width) )┤${NC}"
+        echo -e "  ${border_color}├${mid_border}┤${NC}"
         echo -e "  ${border_color}│${NC} ${title_color}${title}${NC}${spaces}${border_color}│${NC}"
     }
     
     # Draw top border
     echo ""
-    echo -e "${CYAN}  ╔$( printf '═%.0s' $(seq 1 $border_width) )╗${NC}"
-    local title_padding=$((box_width - 18))  # 18 = length of "📊 PLAYBACK SUMMARY"
+    echo -e "${CYAN}  ╔${top_border}╗${NC}"
+    local title_padding=$((box_width - 20))  # 20 = length of " 📊 PLAYBACK SUMMARY" with leading space
     if [ $title_padding -lt 0 ]; then title_padding=0; fi
     echo -e "${CYAN}  ║${NC}  📊 ${CYAN}PLAYBACK SUMMARY${NC}$(printf '%*s' $title_padding '')${CYAN}║${NC}"
-    echo -e "${CYAN}  ╠$( printf '═%.0s' $(seq 1 $border_width) )╣${NC}"
+    echo -e "${CYAN}  ╠${top_border}╣${NC}"
     
     # Session Info Section
     box_line "Session #${session_num}" "${CYAN}" "${YELLOW}"
@@ -608,7 +616,7 @@ show_playback_ended() {
         box_line "  No warnings captured during this session ✅" "${CYAN}" "${GREEN}"
     fi
     
-    echo -e "${CYAN}  ╚$( printf '═%.0s' $(seq 1 $border_width) )╝${NC}"
+    echo -e "${CYAN}  ╚${top_border}╝${NC}"
     echo ""
     
     # Reset tracking after displaying summary
@@ -1105,26 +1113,50 @@ display_event_fields() {
 }
 
 # Function to extract field value from MUX event payload
-# MUX format: [mux-analytics] EVENT eventname{field:value, field2:value2, ...}
+# MUX format can vary:
+#   [mux-analytics] EVENT eventname{field:value, field2:value2, ...}
+#   [mux-analytics] EVENT eventname{field: value, field2: value2}
+#   field=value or field:"value" formats
 extract_mux_field() {
     local line="$1"
     local field_name="$2"
     local value=""
     
-    # Extract the payload portion after eventname{ (handle truncated lines without closing })
+    # Extract the payload portion after eventname{ or after EVENT eventname
     local payload=""
     if [[ "$line" == *"{"* ]]; then
         payload="${line#*\{}"
         payload="${payload%\}*}"
+    else
+        # Try extracting from after EVENT eventname
+        payload="$line"
     fi
     
     if [ -n "$payload" ]; then
-        # Use sed to extract field value (bash 3.2 compatible)
-        # Pattern: field_name:value where value ends at comma or end of string
-        value=$(echo "$payload" | sed -n "s/.*${field_name}:\([^,]*\).*/\1/p" | head -1)
-        # Trim whitespace
+        # Try multiple extraction patterns (bash 3.2 compatible via sed)
+        
+        # Pattern 1: field:value or field: value (colon separator, with optional space)
+        value=$(echo "$payload" | sed -n "s/.*${field_name}:[[:space:]]*\([^,}]*\).*/\1/p" | head -1)
+        
+        # Pattern 2: field=value (equals separator) 
+        if [ -z "$value" ]; then
+            value=$(echo "$payload" | sed -n "s/.*${field_name}=[[:space:]]*\([^,}]*\).*/\1/p" | head -1)
+        fi
+        
+        # Pattern 3: "field":"value" or "field": "value" (JSON-like)
+        if [ -z "$value" ]; then
+            value=$(echo "$payload" | sed -n "s/.*\"${field_name}\":[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1)
+        fi
+        
+        # Pattern 4: "field":value (JSON-like without value quotes)
+        if [ -z "$value" ]; then
+            value=$(echo "$payload" | sed -n "s/.*\"${field_name}\":[[:space:]]*\([^,}\"]*\).*/\1/p" | head -1)
+        fi
+        
+        # Trim whitespace and trailing commas
         value="${value## }"
         value="${value%% }"
+        value="${value%,}"
     fi
     
     echo "$value"

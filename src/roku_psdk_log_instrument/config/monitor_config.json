@@ -74,6 +74,21 @@
       "beam.events.playback.initiated_3.3": ["content.editId", "playback.playbackId", "playback.trigger"],
       "beam.events.playback.buffer_1.4": ["buffer.action", "buffer.type"],
       "beam.events.playback.statechange_1.4": ["stateChange.action", "playhead.contentPosition", "playhead.streamPosition"]
+    },
+    "mux_events": {
+      "default": [],
+      "running": ["viewer_time"],
+      "playerready": ["player_instance_id", "viewer_time"],
+      "viewstart": ["view_session_id", "view_start", "viewer_time"],
+      "playbackmodechange": ["view_session_id", "viewer_time"],
+      "networkchange": ["view_session_id", "viewer_time"],
+      "play": ["view_session_id", "viewer_time"],
+      "playing": ["view_session_id", "viewer_time", "playhead_time"],
+      "pause": ["view_session_id", "viewer_time"],
+      "seeking": ["view_session_id", "viewer_time"],
+      "seeked": ["view_session_id", "viewer_time"],
+      "ended": ["view_session_id", "viewer_time"],
+      "viewend": ["view_session_id", "view_start", "viewer_time"]
     }
   },
   "isdk_validation": {
